@@ -1,0 +1,19 @@
+name: macOS
+on:
+  push:
+  pull_request:
+jobs:
+  test-and-build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: swift test
+      - name: Build app
+        run: bash scripts/build.sh
+      - name: Package app
+        run: ditto -c -k --sequesterRsrc --keepParent 'build/Easy Display.app' build/Easy-Display-macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Easy-Display-macOS
+          path: build/Easy-Display-macOS.zip
