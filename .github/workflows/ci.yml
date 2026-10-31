@@ -1,7 +1,16 @@
 name: macOS
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      upload_artifact:
+        description: 'Upload app ZIP (requires available Actions artifact storage)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
 jobs:
   test-and-build:
     runs-on: macos-15
@@ -13,7 +22,21 @@ jobs:
         run: bash scripts/build.sh
       - name: Package app
         run: ditto -c -k --sequesterRsrc --keepParent 'build/Easy Display.app' build/Easy-Display-macOS.zip
-      - uses: actions/upload-artifact@v4
+      - name: Verify packaged app
+        run: |
+          codesign --verify --deep --strict 'build/Easy Display.app'
+          unzip -t build/Easy-Display-macOS.zip
+      - name: Upload app ZIP (manual opt-in)
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_artifact
+        uses: actions/upload-artifact@v4
         with:
           name: Easy-Display-macOS
           path: build/Easy-Display-macOS.zip
+          if-no-files-found: error
+          retention-days: 1
+      - name: Build summary
+        if: success()
+        run: |
+          echo '### Easy Display validation passed' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Unit tests, release build, local code signature, and app ZIP were verified.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'App ZIP upload runs only when explicitly enabled under Run workflow. It requires available artifact storage.' >> "$GITHUB_STEP_SUMMARY"
