@@ -127,6 +127,8 @@ struct ContentView: View {
     private func modeCard(_ display: ConnectedDisplay) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             Label("해상도와 배율", systemImage: "slider.horizontal.3").font(.headline)
+            Text("화면 크기와 주사율을 선택한 뒤 ‘설정 적용’을 누르세요.")
+                .font(.callout).foregroundStyle(.secondary)
             Picker("화면 크기", selection: Binding(get: { controller.selectedResolutionKey }, set: { controller.selectedResolutionKey = $0 })) {
                 ForEach(controller.availableResolutions) { mode in
                     Text("\(mode.sizeLabel)  ·  \(mode.isHiDPI ? "HiDPI" : "일반 배율")").tag(mode.resolutionKey)
@@ -142,12 +144,15 @@ struct ContentView: View {
             Divider()
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("15초 동안 미리 보고 결정하세요").font(.callout.weight(.medium))
+                    Text("적용 후 15초 안에 유지 여부를 선택하세요").font(.callout.weight(.medium))
                     Text("확인하지 않으면 이전 설정으로 자동 복구됩니다.").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("변경 미리보기") { controller.preview() }
+                Button("설정 적용") { controller.preview() }
                     .buttonStyle(.borderedProminent).tint(.mint).controlSize(.large)
+                    .help(controller.selectedMode?.selectionKey == display.active.selectionKey
+                          ? "현재 설정과 같습니다. 화면 크기나 주사율을 바꾸면 적용할 수 있습니다."
+                          : "선택한 설정을 적용하고 유지 여부를 확인합니다.")
                     .disabled(controller.selectedMode == nil || controller.selectedMode?.selectionKey == display.active.selectionKey || controller.busy || display.isMirrored)
             }
         }.padding(20).background(cardBackground).disabled(controller.pending != nil)
