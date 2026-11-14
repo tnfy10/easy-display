@@ -170,9 +170,12 @@ struct ContentView: View {
 
     private func hdrCard(_ display: ConnectedDisplay) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Toggle(isOn: Binding(get: { display.hdrEnabled }, set: { controller.setHDR(display, enabled: $0) })) {
+            HStack {
                 Label("HDR (High Dynamic Range)", systemImage: "sun.max").font(.headline)
-            }.toggleStyle(.switch)
+                Spacer()
+                Toggle("HDR", isOn: Binding(get: { display.hdrEnabled }, set: { controller.setHDR(display, enabled: $0) }))
+                    .toggleStyle(.switch).labelsHidden()
+            }
             Text("HDR 영상·사진·게임을 더 넓은 밝기와 색 범위로 표시합니다. 켜면 일반 화면이 어둡거나 색이 다르게 보일 수 있어요. 바꾼 뒤 15초 안에 유지를 누르지 않으면 이전 설정으로 돌아갑니다.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if display.mirrorOf != nil {
@@ -180,6 +183,7 @@ struct ContentView: View {
                     .font(.caption).foregroundStyle(.orange)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20).background(cardBackground)
         .disabled(!controller.isIdle || display.mirrorOf != nil)
     }
