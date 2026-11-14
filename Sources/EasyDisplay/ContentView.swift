@@ -3,6 +3,7 @@ import AppKit
 
 struct ContentView: View {
     @EnvironmentObject private var controller: DisplayController
+    @EnvironmentObject private var updater: Updater
 
     var body: some View {
         NavigationSplitView {
@@ -22,7 +23,7 @@ struct ContentView: View {
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(display.name).fontWeight(.medium).lineLimit(1)
                                 Text(display.mirrorOf.flatMap { controller.display($0) }.map { "\($0.name) 미러링" }
-                                     ?? "\(display.active.sizeLabel) · \(display.active.isHiDPI ? "HiDPI" : "일반")")
+                                     ?? "\(display.active.sizeLabel) · \(display.active.isHiDPI ? "HiDPI" : "일반")\(display.hdrEnabled ? " · HDR" : "")")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 0)
@@ -34,7 +35,11 @@ struct ContentView: View {
                         .disabled(controller.pending != nil || controller.layoutPending != nil)
                 }.listStyle(.sidebar)
                 HStack {
-                    Label("\(controller.displays.count)개 연결됨", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label("\(controller.displays.count)개 연결됨", systemImage: "checkmark.circle.fill")
+                        Button("v\(updater.currentVersion) · 업데이트 확인") { Task { await updater.check(userInitiated: true) } }
+                            .buttonStyle(.link).disabled(updater.phase != .idle)
+                    }.font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button { controller.refresh() } label: { Image(systemName: "arrow.clockwise") }
                         .buttonStyle(.borderless).help("모니터 새로고침").accessibilityLabel("모니터 새로고침")
@@ -44,6 +49,7 @@ struct ContentView: View {
             if let display = controller.selected {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
+                        UpdateBanner()
                         header(display)
                         signalCard(display)
                         if let notice = controller.notice {
@@ -56,6 +62,7 @@ struct ContentView: View {
                         }
                         if controller.displays.count > 1 { ArrangementCard() }
                         modeCard(display)
+                        if display.supportsHDR { hdrCard(display) }
                         customCard(display)
                         Text("HiDPI는 글자와 UI를 더 많은 픽셀로 그린 뒤 화면에 맞춥니다. 최종 선명도는 모니터의 실제 픽셀 밀도에 따라 달라집니다.")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -161,6 +168,22 @@ struct ContentView: View {
         }.padding(20).background(cardBackground).disabled(controller.pending != nil || controller.layoutPending != nil)
     }
 
+    private func hdrCard(_ display: ConnectedDisplay) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle(isOn: Binding(get: { display.hdrEnabled }, set: { controller.setHDR(display, enabled: $0) })) {
+                Label("HDR (High Dynamic Range)", systemImage: "sun.max").font(.headline)
+            }.toggleStyle(.switch)
+            Text("HDR 영상·사진·게임을 더 넓은 밝기와 색 범위로 표시합니다. 켜면 일반 화면이 어둡거나 색이 다르게 보일 수 있어요. 바꾼 뒤 15초 안에 유지를 누르지 않으면 이전 설정으로 돌아갑니다.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if display.mirrorOf != nil {
+                Label("미러링된 모니터는 HDR을 바꿀 수 없습니다. 미러링 원본 모니터에서 설정해 주세요.", systemImage: "rectangle.on.rectangle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+        }
+        .padding(20).background(cardBackground)
+        .disabled(!controller.isIdle || display.mirrorOf != nil)
+    }
+
     private func customCard(_ display: ConnectedDisplay) -> some View {
         HStack(alignment: .center, spacing: 16) {
             Image(systemName: "sparkles.rectangle.stack").font(.title).foregroundStyle(.mint)
@@ -208,14 +231,14 @@ struct ContentView: View {
     private var layoutSheet: some View {
         VStack(spacing: 20) {
             Image(systemName: "rectangle.3.group").font(.system(size: 42)).foregroundStyle(.mint)
-            Text("이 모니터 배치를 유지할까요?").font(.title2.bold())
+            Text(controller.layoutPending?.title ?? "이 설정을 유지할까요?").font(.title2.bold())
             Text(controller.layoutPending?.summary ?? "").multilineTextAlignment(.center)
             Text("화면이 보이지 않거나 모니터 경고가 나타나면 기다리세요. 자동으로 복구됩니다.")
                 .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            Text("\(controller.remainingSeconds)초 후 이전 배치로 자동 복구").monospacedDigit().foregroundStyle(.secondary)
+            Text("\(controller.remainingSeconds)초 후 이전 설정으로 자동 복구").monospacedDigit().foregroundStyle(.secondary)
             HStack(spacing: 12) {
-                Button("이전 배치로 복구", role: .cancel) { controller.revertLayout() }.keyboardShortcut(.cancelAction)
-                Button("이 배치 유지") { controller.keepLayout() }.buttonStyle(.borderedProminent).tint(.mint)
+                Button("이전 설정으로 복구", role: .cancel) { controller.revertLayout() }.keyboardShortcut(.cancelAction)
+                Button("이 설정 유지") { controller.keepLayout() }.buttonStyle(.borderedProminent).tint(.mint)
             }.controlSize(.large)
         }.padding(32).frame(width: 480).interactiveDismissDisabled()
     }

@@ -54,6 +54,33 @@ enum RecoveryWatchdog {
         return 1
     }
 
+    /// `--hdr-watchdog <marker> <uuid> <0|1>`: restores the previous HDR state.
+    static func runHDR(arguments: [String]) -> Int32 {
+        guard arguments.count == 5, let original = Int(arguments[4]) else { return 2 }
+        let marker = URL(fileURLWithPath: arguments[2])
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            if !FileManager.default.fileExists(atPath: marker.path) { return 0 }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        for _ in 0..<300 {
+            if !FileManager.default.fileExists(atPath: marker.path) { return 0 }
+            if let id = DisplayHardware.displayID(uuid: arguments[3]) {
+                do {
+                    try DisplayHardware.setHDR(id: id, enabled: original != 0)
+                    try? FileManager.default.removeItem(at: marker)
+                    return 0
+                } catch { /* Retry while the display reconfigures. */ }
+            }
+            Thread.sleep(forTimeInterval: 1)
+        }
+        return 1
+    }
+
+    static func startHDR(uuid: String, originalEnabled: Bool) throws -> URL {
+        try launch { ["--hdr-watchdog", $0.path, uuid, originalEnabled ? "1" : "0"] }
+    }
+
     static func start(uuid: String, originalMode: Int32) throws -> URL {
         try launch { ["--watchdog", uuid, String(originalMode), $0.path] }
     }

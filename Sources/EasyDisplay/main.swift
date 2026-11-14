@@ -16,13 +16,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct EasyDisplayApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var controller = DisplayController()
+    @StateObject private var updater = Updater()
     @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
         Window("Easy Display", id: "main") {
-            ContentView().environmentObject(controller).tint(.mint)
+            ContentView().environmentObject(controller).environmentObject(updater).tint(.mint)
+                .onAppear { let controller = controller; updater.canInstallNow = { controller.isIdle } }
         }.defaultSize(width: 1000, height: 780)
             .commands {
+                CommandGroup(after: .appInfo) {
+                    Button("업데이트 확인…") { Task { await updater.check(userInitiated: true) } }
+                        .disabled(updater.phase != .idle)
+                }
                 CommandGroup(replacing: .newItem) {
                     Button("Easy Display 열기") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }.keyboardShortcut("0", modifiers: .command)
                 }
@@ -48,8 +54,19 @@ struct EasyDisplayApp: App {
                 }.disabled(!controller.isIdle)
             }
             Divider()
+            if let release = updater.available {
+                Button("업데이트 설치 (v\(release.version))") { Task { await updater.install() } }.disabled(updater.phase != .idle)
+            } else {
+                Button("업데이트 확인") {
+                    openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true)
+                    Task { await updater.check(userInitiated: true) }
+                }.disabled(updater.phase != .idle)
+            }
             Button("모니터 새로고침") { controller.refresh() }
             Button("종료") { controller.rollback(); controller.revertLayout(); NSApp.terminate(nil) }.keyboardShortcut("q", modifiers: .command)
+        }
+        Settings {
+            UpdateSettingsView().environmentObject(updater).tint(.mint)
         }
     }
 }
@@ -58,6 +75,8 @@ if CommandLine.arguments.dropFirst().first == "--watchdog" {
     exit(RecoveryWatchdog.run(arguments: CommandLine.arguments))
 } else if CommandLine.arguments.dropFirst().first == "--layout-watchdog" {
     exit(RecoveryWatchdog.runLayout(arguments: CommandLine.arguments))
+} else if CommandLine.arguments.dropFirst().first == "--hdr-watchdog" {
+    exit(RecoveryWatchdog.runHDR(arguments: CommandLine.arguments))
 } else if CommandLine.arguments.dropFirst().first == "--diagnose" {
     MainActor.assumeIsolated {
         let controller = DisplayController()

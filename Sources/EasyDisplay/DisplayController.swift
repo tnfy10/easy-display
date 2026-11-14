@@ -27,10 +27,16 @@ import SwiftUI
         let initialSignal: PhysicalSignal?
     }
 
+    /// A change confirmed within 15 seconds or reverted, also by an independent watchdog.
     struct LayoutPreview {
-        let snapshot: [LayoutEntry]
+        enum Original {
+            case layout([LayoutEntry])
+            case hdr(uuid: String, enabled: Bool)
+        }
+        let original: Original
         let marker: URL
         let deadline: Date
+        let title: String
         let summary: String
     }
 
@@ -186,14 +192,26 @@ import SwiftUI
         applyOrigins(DisplayArrangement.normalized(origins, main: main.uuid), notice: "모니터 배치를 저장했습니다.")
     }
 
+    /// The display others copy; when several sets exist, the one with the most mirrors.
+    var mirrorSource: ConnectedDisplay? {
+        arrangeable.filter { !mirrors(of: $0).isEmpty }.max { mirrors(of: $0).count < mirrors(of: $1).count }
+    }
+
+    func setMirrorSource(_ source: ConnectedDisplay) {
+        refresh()
+        guard source.mirrorOf == nil, mirrors(of: source).count != displays.count - 1 || mirrorSource?.id != source.id else { return }
+        previewLayout(DisplayArrangement.mirrorAll(snapshot(), to: source.uuid),
+                      summary: "모든 모니터에 \(source.name) 화면을 표시합니다.")
+    }
+
     func setMirroring(_ enabled: Bool) {
         refresh()
         guard enabled != isMirroring, displays.count > 1 else { return }
         if enabled {
-            let source = selected.flatMap { $0.mirrorOf == nil ? $0 : display($0.mirrorOf) } ?? arrangeable.first(where: \.isMain)
-            guard let source else { return }
+            // The main display is the predictable default source; it can be changed afterwards.
+            guard let source = arrangeable.first(where: \.isMain) ?? arrangeable.first else { return }
             previewLayout(DisplayArrangement.mirrorAll(snapshot(), to: source.uuid),
-                          summary: "모든 모니터가 \(source.name) 화면을 미러링합니다.")
+                          summary: "모든 모니터에 \(source.name) 화면을 표시합니다.")
         } else {
             previewLayout(DisplayArrangement.extendAll(snapshot()), summary: "모든 모니터를 확장 화면으로 사용합니다.")
         }
@@ -212,12 +230,30 @@ import SwiftUI
         let original = snapshot()
         do {
             let marker = try RecoveryWatchdog.startLayout(snapshot: original)
-            layoutPending = LayoutPreview(snapshot: original, marker: marker, deadline: Date().addingTimeInterval(15), summary: summary)
-            remainingSeconds = 15
-            do { try DisplayHardware.applyLayout(entries, permanent: false, mirroring: true) }
-            catch { revertLayout(); throw error }
-            refresh()
-            timer?.invalidate()
+            layoutPending = LayoutPreview(original: .layout(original), marker: marker, deadline: Date().addingTimeInterval(15),
+                                          title: "이 모니터 배치를 유지할까요?", summary: summary)
+            try startTimedChange { try DisplayHardware.applyLayout(entries, permanent: false, mirroring: true) }
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func setHDR(_ display: ConnectedDisplay, enabled: Bool) {
+        refresh()
+        guard isIdle, let display = self.display(display.id), display.supportsHDR, display.mirrorOf == nil, display.hdrEnabled != enabled else { return }
+        do {
+            let marker = try RecoveryWatchdog.startHDR(uuid: display.uuid, originalEnabled: display.hdrEnabled)
+            layoutPending = LayoutPreview(original: .hdr(uuid: display.uuid, enabled: display.hdrEnabled), marker: marker,
+                                          deadline: Date().addingTimeInterval(15), title: "이 HDR 설정을 유지할까요?",
+                                          summary: "\(display.name)에서 HDR을 \(enabled ? "켰습니다" : "껐습니다").")
+            try startTimedChange { try DisplayHardware.setHDR(id: display.id, enabled: enabled) }
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func startTimedChange(_ apply: () throws -> Void) throws {
+        remainingSeconds = 15
+        do { try apply() }
+        catch { revertLayout(); throw error }
+        refresh()
+        timer?.invalidate()
             timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
                 Task { @MainActor in
                     guard let self, let preview = self.layoutPending else { return }
@@ -225,28 +261,38 @@ import SwiftUI
                     if self.remainingSeconds == 0 { self.revertLayout() }
                 }
             }
-        } catch { errorMessage = error.localizedDescription }
     }
 
     func keepLayout() {
         guard let preview = layoutPending else { return }
         refresh()
         do {
-            var current = snapshot()
-            for i in current.indices { current[i].modeID = nil }
-            try DisplayHardware.applyLayout(current, permanent: true, mirroring: true)
+            if case .layout = preview.original {
+                var current = snapshot()
+                for i in current.indices { current[i].modeID = nil }
+                try DisplayHardware.applyLayout(current, permanent: true, mirroring: true)
+            }
+            // HDR is stored by macOS as soon as it switches; confirming only stops the watchdog.
             try FileManager.default.removeItem(at: preview.marker)
             finishLayout()
-            notice = "모니터 배치를 저장했습니다."
+            notice = "설정을 저장했습니다."
         } catch { errorMessage = error.localizedDescription; revertLayout() }
     }
 
     func revertLayout() {
         guard let preview = layoutPending else { return }
         do {
-            try DisplayHardware.applyLayout(preview.snapshot, permanent: false, mirroring: true)
+            switch preview.original {
+            case .layout(let snapshot):
+                try DisplayHardware.applyLayout(snapshot, permanent: false, mirroring: true)
+            case .hdr(let uuid, let enabled):
+                guard let id = DisplayHardware.displayID(uuid: uuid) else {
+                    throw DisplayError.message("모니터가 분리되었습니다. 다시 연결되면 복구 프로세스가 재시도합니다.")
+                }
+                try DisplayHardware.setHDR(id: id, enabled: enabled)
+            }
             try? FileManager.default.removeItem(at: preview.marker)
-            notice = "이전 모니터 배치로 복구했습니다."
+            notice = "이전 설정으로 복구했습니다."
         } catch { errorMessage = error.localizedDescription }
         // On failure, the marker stays so the independent watchdog keeps retrying.
         finishLayout()
@@ -299,7 +345,7 @@ import SwiftUI
 
     var diagnosticText: String {
         displays.map { display in
-            "\(display.name)\nUUID: \(display.uuid)\nModel: \(display.identity.modelKey)\nUI: \(display.active.sizeLabel) \(display.active.isHiDPI ? "HiDPI" : "LoDPI")\nRender: \(display.active.pixelWidth) × \(display.active.pixelHeight)\nSignal: \(display.signal?.label ?? "확인 불가")\nMode rate: \(display.active.frequencyLabel)\nMain: \(display.isMain)\nBounds: \(Int(display.bounds.minX)), \(Int(display.bounds.minY)) \(Int(display.bounds.width)) × \(Int(display.bounds.height))\nMirrors: \(self.display(display.mirrorOf)?.name ?? "-")\nAvailable modes: \(display.modes.count)"
+            "\(display.name)\nUUID: \(display.uuid)\nModel: \(display.identity.modelKey)\nUI: \(display.active.sizeLabel) \(display.active.isHiDPI ? "HiDPI" : "LoDPI")\nRender: \(display.active.pixelWidth) × \(display.active.pixelHeight)\nSignal: \(display.signal?.label ?? "확인 불가")\nMode rate: \(display.active.frequencyLabel)\nMain: \(display.isMain)\nBounds: \(Int(display.bounds.minX)), \(Int(display.bounds.minY)) \(Int(display.bounds.width)) × \(Int(display.bounds.height))\nMirrors: \(self.display(display.mirrorOf)?.name ?? "-")\nHDR: \(display.supportsHDR ? (display.hdrEnabled ? "on" : "off") : "unsupported")\nAvailable modes: \(display.modes.count)"
         }.joined(separator: "\n\n")
     }
 }

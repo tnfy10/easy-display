@@ -139,4 +139,45 @@ final class DisplayTests: XCTestCase {
         let data = try XCTUnwrap(Data(base64Encoded: try JSONEncoder().encode(entries).base64EncodedString()))
         XCTAssertEqual(try JSONDecoder().decode([LayoutEntry].self, from: data), entries)
     }
+
+    // MARK: - Updater
+
+    func testSemanticVersionComparison() {
+        XCTAssertTrue(SemanticVersion.isNewer("v0.10.0", than: "0.9.3"))
+        XCTAssertTrue(SemanticVersion.isNewer("0.2.1", than: "0.2"))
+        XCTAssertFalse(SemanticVersion.isNewer("v0.2.0", than: "0.2.0"))
+        XCTAssertFalse(SemanticVersion.isNewer("0.1.9", than: "0.2.0"))
+        XCTAssertEqual(SemanticVersion.parts("v1.2.0-beta+5"), [1, 2, 0])
+    }
+
+    func testReleaseParsingPicksAppZipAndRejectsPrereleases() throws {
+        let json = """
+        {"tag_name":"v0.3.0","body":"notes","html_url":"https://github.com/tnfy10/easy-display/releases/tag/v0.3.0",
+         "draft":false,"prerelease":false,"assets":[
+          {"name":"other.txt","browser_download_url":"https://github.com/x/other.txt"},
+          {"name":"Easy-Display-v0.3.0.zip","browser_download_url":"https://github.com/tnfy10/easy-display/releases/download/v0.3.0/Easy-Display-v0.3.0.zip","digest":"sha256:abc"}]}
+        """
+        let release = try Updater.parseRelease(Data(json.utf8))
+        XCTAssertEqual(release.version, "0.3.0")
+        XCTAssertEqual(release.asset.lastPathComponent, "Easy-Display-v0.3.0.zip")
+        XCTAssertEqual(release.digest, "sha256:abc")
+        XCTAssertThrowsError(try Updater.parseRelease(Data(json.replacingOccurrences(of: "\"prerelease\":false", with: "\"prerelease\":true").utf8)))
+        XCTAssertThrowsError(try Updater.parseRelease(Data(json.replacingOccurrences(of: "https://github.com/tnfy10", with: "https://evil.example/tnfy10").utf8)))
+    }
+
+    /// Live end-to-end check against GitHub; run with EASY_DISPLAY_NETWORK_TESTS=1.
+    func testDownloadsAndVerifiesLatestRelease() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["EASY_DISPLAY_NETWORK_TESTS"] == "1")
+        let release = try await Updater.latestRelease()
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let app = try await Updater.download(release, into: staging, expectedBundleID: "com.tnfy10.easy-display")
+        XCTAssertEqual(Bundle(url: app)?.infoDictionary?["CFBundleShortVersionString"] as? String, release.version)
+        await XCTAssertThrowsErrorAsync { try await Updater.download(release, into: staging, expectedBundleID: "com.other.app") }
+    }
+
+    private func XCTAssertThrowsErrorAsync(_ body: () async throws -> Void, file: StaticString = #filePath, line: UInt = #line) async {
+        do { try await body(); XCTFail("expected error", file: file, line: line) } catch {}
+    }
 }

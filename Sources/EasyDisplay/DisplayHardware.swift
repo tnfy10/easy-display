@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import IOKit
+import Darwin
 
 /// Rendering dimensions from CoreGraphics are deliberately kept separate from link timing.
 enum DisplayHardware {
@@ -40,6 +41,40 @@ enum DisplayHardware {
         }
     }
 
+    // MARK: HDR (private SkyLight API, the same switch System Settings uses)
+
+    private nonisolated(unsafe) static let skyLight = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY)
+    private typealias HDRQuery = @convention(c) (CGDirectDisplayID) -> Bool
+    private typealias HDRSetter = @convention(c) (CGDirectDisplayID, Bool) -> Void
+
+    private static func symbol<T>(_ name: String, as type: T.Type) -> T? {
+        guard let skyLight, let pointer = dlsym(skyLight, name) else { return nil }
+        return unsafeBitCast(pointer, to: type)
+    }
+
+    /// Looked up at runtime so a future macOS without these symbols simply hides the HDR switch.
+    static func supportsHDR(_ id: CGDirectDisplayID) -> Bool {
+        symbol("SLSDisplaySupportsHDRMode", as: HDRQuery.self)?(id) ?? false
+    }
+
+    static func isHDREnabled(_ id: CGDirectDisplayID) -> Bool {
+        symbol("SLSDisplayIsHDRModeEnabled", as: HDRQuery.self)?(id) ?? false
+    }
+
+    /// The setter returns nothing, so success is confirmed by reading the state back.
+    static func setHDR(id: CGDirectDisplayID, enabled: Bool) throws {
+        guard supportsHDR(id), let set = symbol("SLSDisplaySetHDRModeEnabled", as: HDRSetter.self) else {
+            throw DisplayError.message("이 모니터 또는 macOS 버전에서는 HDR을 전환할 수 없습니다.")
+        }
+        guard isHDREnabled(id) != enabled else { return }
+        set(id, enabled)
+        for _ in 0..<30 {
+            if isHDREnabled(id) == enabled { return }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        throw DisplayError.message("HDR을 \(enabled ? "켜지" : "끄지") 못했습니다. 케이블이나 모니터 설정에서 HDR 입력을 지원하는지 확인해 주세요.")
+    }
+
     static func onlineIDs() -> [CGDirectDisplayID] {
         var count: UInt32 = 0
         guard CGGetOnlineDisplayList(0, nil, &count) == .success else { return [] }
@@ -72,7 +107,8 @@ enum DisplayHardware {
                 isMirrored: CGDisplayIsInMirrorSet(id) != 0,
                 active: DisplayMode(active), modes: DisplayMode.distinct(modes(id).map(DisplayMode.init)),
                 signal: link?.signal, nativeWidth: link?.nativeWidth ?? 0, nativeHeight: link?.nativeHeight ?? 0,
-                bounds: CGDisplayBounds(id), mirrorOf: master == kCGNullDirectDisplay ? nil : master
+                bounds: CGDisplayBounds(id), mirrorOf: master == kCGNullDirectDisplay ? nil : master,
+                supportsHDR: supportsHDR(id), hdrEnabled: isHDREnabled(id)
             )
         }.sorted {
             if $0.isMain != $1.isMain { return $0.isMain }

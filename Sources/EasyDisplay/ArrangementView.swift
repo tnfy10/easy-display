@@ -4,24 +4,22 @@ import AppKit
 /// Global multi-display settings: extend vs. mirror, main display, and drag-to-arrange.
 struct ArrangementCard: View {
     @EnvironmentObject private var controller: DisplayController
+    @State private var showAdvanced = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Label("여러 모니터 배치", systemImage: "rectangle.3.group").font(.headline)
-                Spacer()
-                Picker("화면 사용 방식", selection: Binding(get: { controller.isMirroring }, set: { controller.setMirroring($0) })) {
-                    Text("확장").tag(false)
-                    Text("미러링").tag(true)
-                }.pickerStyle(.segmented).labelsHidden().frame(width: 170)
-                    .help("확장: 모니터마다 다른 화면 · 미러링: 같은 화면을 함께 표시")
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("여러 모니터 사용 방식", systemImage: "rectangle.3.group").font(.headline)
+                Text("모니터 \(controller.displays.count)대가 연결되어 있어요. 어떻게 쓸지 고르세요.").font(.callout).foregroundStyle(.secondary)
             }
-            Text(controller.isMirroring
-                 ? "미러링 중인 모니터는 원본 모니터와 함께 표시됩니다. 모니터를 끌어 위치를 바꾸거나, 아래에서 모니터별로 미러링을 해제할 수 있어요."
-                 : "모니터를 끌어서 실제 책상 위의 위치에 맞게 놓으세요. 위쪽에 막대가 표시된 모니터가 주 모니터입니다.")
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            ArrangementCanvas().frame(height: 250)
-            if let display = controller.selected { selectedControls(display) }
+            HStack(spacing: 12) {
+                modeOption(mirroring: false, title: "확장", icon: "rectangle.split.2x1",
+                           detail: "모니터마다 다른 화면을 띄워 작업 공간을 넓혀요. 창을 옆 모니터로 옮길 수 있어요.")
+                modeOption(mirroring: true, title: "미러링", icon: "rectangle.on.rectangle",
+                           detail: "모든 모니터에 같은 화면을 보여줘요. 발표하거나 TV에 연결할 때 좋아요.")
+            }
+            if controller.isMirroring { mirroringSection } else { extendSection }
+            if controller.displays.count > 2 { advancedSection }
         }
         .padding(20)
         .background(RoundedRectangle(cornerRadius: 16).fill(Color(nsColor: .controlBackgroundColor))
@@ -29,36 +27,92 @@ struct ArrangementCard: View {
         .disabled(!controller.isIdle)
     }
 
-    private func selectedControls(_ display: ConnectedDisplay) -> some View {
-        let sources = controller.displays.filter { $0.id != display.id && $0.mirrorOf == nil }
-        return VStack(alignment: .leading, spacing: 12) {
-            Divider()
-            HStack(spacing: 12) {
-                Image(systemName: display.isBuiltin ? "laptopcomputer" : "display").foregroundStyle(.mint)
-                Text(display.name).fontWeight(.medium).lineLimit(1)
-                if display.isMain {
-                    Text("주 모니터").font(.caption.weight(.semibold)).padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(Color.mint.opacity(0.15), in: Capsule())
+    private func modeOption(mirroring: Bool, title: String, icon: String, detail: String) -> some View {
+        let selected = controller.isMirroring == mirroring
+        return Button { controller.setMirroring(mirroring) } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: icon).font(.title2).foregroundStyle(selected ? Color.mint : Color.secondary).frame(width: 30)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(title).font(.body.weight(.semibold))
+                        if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(.mint).accessibilityLabel("사용 중") }
+                    }
+                    Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer()
-                Button("주 모니터로 설정") { controller.setMain(display) }
-                    .disabled(display.isMain || display.mirrorOf != nil)
-                    .help(display.mirrorOf != nil ? "미러링된 모니터는 주 모니터가 될 수 없습니다." : "메뉴 막대와 Dock을 이 모니터로 옮깁니다.")
+                Spacer(minLength: 0)
             }
-            Picker("이 모니터에 표시할 화면", selection: Binding(
-                get: { display.mirrorOf },
-                set: { id in controller.mirror(display, of: controller.display(id)) })) {
-                Text("독립 화면 (확장)").tag(CGDirectDisplayID?.none)
-                ForEach(sources) { source in
-                    Text("\(source.name) 미러링").tag(Optional(source.id))
-                }
+            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .background(selected ? Color.mint.opacity(0.12) : Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.mint : Color.clear, lineWidth: 1.5))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(selected ? "지금 사용 중인 방식입니다." : "\(title)(으)로 바꾼 뒤 15초 안에 유지 여부를 확인합니다.")
+    }
+
+    private var extendSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("모니터 위치 맞추기").font(.subheadline.weight(.semibold))
+            ArrangementCanvas().frame(height: 230)
+            HStack(spacing: 18) {
+                legend("hand.draw", "끌어서 실제 책상 위치에 맞춰요")
+                legend("menubar.rectangle", "위쪽 막대 = 주 모니터")
             }
-            .disabled(sources.isEmpty)
-            if !controller.mirrors(of: display).isEmpty {
-                Text("이 화면을 미러링하는 모니터: \(controller.mirrors(of: display).map(\.name).joined(separator: ", "))")
-                    .font(.caption).foregroundStyle(.secondary)
+            mainPicker
+        }
+    }
+
+    private var mirroringSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            let sources = controller.arrangeable
+            Picker("복제할 원본 화면", selection: Binding(
+                get: { controller.mirrorSource?.id },
+                set: { id in if let source = controller.display(id) { controller.setMirrorSource(source) } })) {
+                ForEach(sources) { Text($0.name).tag(Optional($0.id)) }
+            }
+            if let source = controller.mirrorSource {
+                Text("\(controller.mirrors(of: source).map(\.name).joined(separator: ", "))에 \(source.name) 화면이 똑같이 표시돼요. 해상도는 원본 모니터 기준으로 맞춰집니다.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if sources.count > 1 {
+                ArrangementCanvas().frame(height: 200)
+                mainPicker
             }
         }
+    }
+
+    /// The main display carries the menu bar and Dock and is where new windows open.
+    private var mainPicker: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Picker("주 모니터 (메뉴 막대·Dock)", selection: Binding(
+                get: { controller.arrangeable.first(where: \.isMain)?.id },
+                set: { id in if let display = controller.display(id) { controller.setMain(display) } })) {
+                ForEach(controller.arrangeable) { Text($0.name).tag(Optional($0.id)) }
+            }
+            Text("새 창과 메뉴 막대, Dock이 주 모니터에 표시됩니다.").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var advancedSection: some View {
+        DisclosureGroup("고급: 일부 모니터만 미러링", isExpanded: $showAdvanced) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("모니터마다 독립 화면으로 쓸지, 다른 모니터 화면을 복제할지 정할 수 있어요.")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(controller.displays) { display in
+                    let sources = controller.displays.filter { $0.id != display.id && $0.mirrorOf == nil }
+                    Picker(display.name, selection: Binding(
+                        get: { display.mirrorOf },
+                        set: { id in controller.mirror(display, of: controller.display(id)) })) {
+                        Text("독립 화면").tag(CGDirectDisplayID?.none)
+                        ForEach(sources) { Text("\($0.name) 화면 복제").tag(Optional($0.id)) }
+                    }
+                }
+            }.padding(.top, 8)
+        }.font(.callout)
+    }
+
+    private func legend(_ icon: String, _ text: String) -> some View {
+        Label(text, systemImage: icon).font(.caption).foregroundStyle(.secondary)
     }
 }
 

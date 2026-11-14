@@ -71,6 +71,8 @@ struct ConnectedDisplay: Identifiable {
     let bounds: CGRect
     /// The display whose contents this one shows, when it is part of a mirror set.
     let mirrorOf: CGDirectDisplayID?
+    let supportsHDR: Bool
+    let hdrEnabled: Bool
 
     var matchingResolutions: [DisplayMode] {
         var seen = Set<String>()
