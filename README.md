@@ -17,6 +17,10 @@
 
 일반적인 해상도 변경에는 관리자 권한이 필요하지 않습니다. 새 HiDPI 모드를 등록하거나 등록 전 파일을 복원할 때만 macOS 관리자 인증이 필요합니다. 별도 유료 앱, 화면 기록 권한, 접근성 권한은 사용하지 않습니다.
 
+## 다운로드
+
+[Releases](https://github.com/tnfy10/easy-display/releases/latest)에서 `Easy-Display-<버전>.zip`을 받아 압축을 풀고 `Easy Display.app`을 응용 프로그램 폴더로 옮기세요. `v*` 태그를 푸시하면 GitHub Actions가 테스트, 빌드, 릴리스 게시를 자동으로 진행합니다.
+
 ## 실행
 
 macOS 14 이상, Swift 6 / Xcode 16 이상이 필요합니다. Apple Silicon에서 개발 및 검증했습니다. Intel용 빌드는 해당 아키텍처에서 별도 검증이 필요합니다.

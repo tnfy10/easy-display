@@ -1,0 +1,58 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+concurrency:
+  group: release-${{ github.ref_name }}
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch annotated tags
+        # checkout turns the triggering tag into a lightweight one; restore its message.
+        run: git fetch --force --tags
+      - name: Unit tests
+        run: swift test
+      - name: Stamp version from tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          plutil -replace CFBundleShortVersionString -string "$version" Resources/Info.plist
+          plutil -replace CFBundleVersion -string "$(git rev-list --count HEAD)" Resources/Info.plist
+      - name: Build app
+        run: bash scripts/build.sh
+      - name: Package app
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent 'build/Easy Display.app' "build/Easy-Display-${GITHUB_REF_NAME}.zip"
+          codesign --verify --deep --strict 'build/Easy Display.app'
+          unzip -t "build/Easy-Display-${GITHUB_REF_NAME}.zip"
+      - name: Write release notes
+        run: |
+          previous="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          {
+            # Only an annotated tag's own message is a summary; a lightweight tag would show the commit.
+            if [ "$(git cat-file -t "$GITHUB_REF_NAME")" = tag ]; then
+              git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed '/^-----BEGIN/,$d'
+              echo
+            fi
+            echo '## 변경 사항'
+            if [ -n "$previous" ]; then git log --no-merges --pretty='- %s' "$previous..$GITHUB_REF_NAME"
+            else git log --no-merges --pretty='- %s' "$GITHUB_REF_NAME"; fi
+            echo
+            echo '## 설치'
+            echo '- Apple Silicon (M 시리즈), macOS 14 이상'
+            echo '- ZIP 압축을 풀고 Easy Display.app을 응용 프로그램 폴더로 이동해 실행하세요.'
+            echo
+            echo '로컬 ad-hoc 서명 빌드이며 Apple Developer ID 공증은 포함되지 않습니다.'
+          } > build/release-notes.md
+          cat build/release-notes.md
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "build/Easy-Display-${GITHUB_REF_NAME}.zip" \
+            --title "Easy Display ${GITHUB_REF_NAME}" --notes-file build/release-notes.md --verify-tag
