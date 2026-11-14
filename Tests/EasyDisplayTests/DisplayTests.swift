@@ -84,4 +84,59 @@ final class DisplayTests: XCTestCase {
     func testShellQuoteProtectsSingleQuotesAndSubstitutions() {
         XCTAssertEqual(OverrideStore.shellQuote("a'b$(touch /tmp/no)"), "'a'\\''b$(touch /tmp/no)'")
     }
+
+    // MARK: - Arrangement
+
+    func testDroppedDisplaySnapsToNearestEdgeAndAlignsTops() {
+        let main = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let dropped = CGRect(x: 2000, y: 30, width: 2560, height: 1440)
+        XCTAssertEqual(DisplayArrangement.snap(dropped, others: [main]), CGPoint(x: 1920, y: 0))
+        let above = CGRect(x: 300, y: -1500, width: 1280, height: 800)
+        XCTAssertEqual(DisplayArrangement.snap(above, others: [main]), CGPoint(x: 320, y: -800))
+    }
+
+    func testSnapNeverOverlapsAndKeepsSharedEdge() {
+        let a = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let b = CGRect(x: 1920, y: 0, width: 1920, height: 1080)
+        let dropped = CGRect(x: 1000, y: 100, width: 1920, height: 1080)
+        let origin = try! XCTUnwrap(DisplayArrangement.snap(dropped, others: [a, b]))
+        let placed = CGRect(origin: origin, size: dropped.size)
+        XCTAssertFalse(DisplayArrangement.overlaps(placed, a))
+        XCTAssertFalse(DisplayArrangement.overlaps(placed, b))
+        // Far below: must still be clamped to touch, not float away.
+        let far = DisplayArrangement.snap(CGRect(x: 0, y: 5000, width: 800, height: 600), others: [a])
+        XCTAssertEqual(far?.y, 1080)
+    }
+
+    func testNormalizationPutsMainAtOrigin() {
+        let result = DisplayArrangement.normalized(["a": CGPoint(x: 100, y: -50), "b": CGPoint(x: 2020, y: 0)], main: "a")
+        XCTAssertEqual(result["a"], .zero)
+        XCTAssertEqual(result["b"], CGPoint(x: 1920, y: 50))
+    }
+
+    func testMirroringRedirectsChainsAndSwapsRoles() {
+        let entries = [LayoutEntry(uuid: "a", origin: .zero, modeID: 1),
+                       LayoutEntry(uuid: "b", origin: CGPoint(x: 1920, y: 0), modeID: 2),
+                       LayoutEntry(uuid: "c", origin: CGPoint(x: 3840, y: 0), mirrorOf: "b")]
+        // b follows a; c (which followed b) must follow a too, since sets are one level deep.
+        let mirrored = DisplayArrangement.mirroring(entries, display: "b", of: "a")
+        XCTAssertEqual(mirrored.map(\.mirrorOf), [nil, "a", "a"])
+        XCTAssertNil(mirrored[1].origin)
+        XCTAssertTrue(mirrored.allSatisfy { $0.modeID == nil })
+        // Choosing a display's own follower as source swaps them.
+        let swapped = DisplayArrangement.mirroring(entries, display: "b", of: "c")
+        XCTAssertEqual(swapped.map(\.mirrorOf), [nil, "c", nil])
+        // Extending clears mirroring and lets macOS place former mirrors.
+        let extended = DisplayArrangement.extendAll(DisplayArrangement.mirrorAll(entries, to: "a"))
+        XCTAssertEqual(extended.map(\.mirrorOf), [nil, nil, nil])
+        XCTAssertEqual(extended[0].origin, .zero)
+        XCTAssertNil(extended[1].origin)
+    }
+
+    func testLayoutSnapshotRoundTripsForWatchdog() throws {
+        let entries = [LayoutEntry(uuid: "a", origin: CGPoint(x: -1920, y: 12), mirrorOf: nil, modeID: 7),
+                       LayoutEntry(uuid: "b", origin: nil, mirrorOf: "a", modeID: nil)]
+        let data = try XCTUnwrap(Data(base64Encoded: try JSONEncoder().encode(entries).base64EncodedString()))
+        XCTAssertEqual(try JSONDecoder().decode([LayoutEntry].self, from: data), entries)
+    }
 }

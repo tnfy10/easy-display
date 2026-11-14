@@ -9,6 +9,7 @@ import SwiftUI
     @Published var errorMessage: String?
     @Published var notice: String?
     @Published var pending: Preview?
+    @Published var layoutPending: LayoutPreview?
     @Published var remainingSeconds = 15
     @Published var busy = false
     @Published var showCustom = false
@@ -24,6 +25,13 @@ import SwiftUI
         let marker: URL
         let deadline: Date
         let initialSignal: PhysicalSignal?
+    }
+
+    struct LayoutPreview {
+        let snapshot: [LayoutEntry]
+        let marker: URL
+        let deadline: Date
+        let summary: String
     }
 
     var selected: ConnectedDisplay? { displays.first { $0.id == selectedID } }
@@ -66,14 +74,14 @@ import SwiftUI
     }
 
     func select(_ display: ConnectedDisplay) {
-        guard pending == nil else { return }
+        guard pending == nil, layoutPending == nil else { return }
         selectedID = display.id
         selectedModeID = display.modes.first { $0.selectionKey == display.active.selectionKey }?.id
     }
 
     func preview() {
         refresh()
-        guard pending == nil, !busy, let display = selected, let target = selectedMode else { return }
+        guard pending == nil, layoutPending == nil, !busy, let display = selected, let target = selectedMode else { return }
         guard !display.isMirrored else { errorMessage = "화면 미러링을 해제한 뒤 설정해 주세요."; return }
         do {
             let marker = try RecoveryWatchdog.start(uuid: display.uuid, originalMode: display.active.id)
@@ -127,6 +135,129 @@ import SwiftUI
         finishPreview()
     }
 
+    // MARK: - Multiple displays
+
+    var isIdle: Bool { pending == nil && layoutPending == nil && !busy }
+    /// Displays that occupy their own place in the desktop (mirror sources and independent screens).
+    var arrangeable: [ConnectedDisplay] { displays.filter { $0.mirrorOf == nil } }
+    var isMirroring: Bool { displays.contains { $0.mirrorOf != nil } }
+    func mirrors(of display: ConnectedDisplay) -> [ConnectedDisplay] { displays.filter { $0.mirrorOf == display.id } }
+    func display(_ id: CGDirectDisplayID?) -> ConnectedDisplay? { displays.first { $0.id == id } }
+
+    private func snapshot() -> [LayoutEntry] {
+        displays.map { d in
+            LayoutEntry(uuid: d.uuid, origin: d.bounds.origin,
+                        mirrorOf: d.mirrorOf.flatMap { m in displays.first { $0.id == m }?.uuid }, modeID: d.active.id)
+        }
+    }
+
+    /// Positions never change the output signal, so they are saved immediately.
+    private func applyOrigins(_ origins: [String: CGPoint], notice message: String) {
+        let entries = origins.map { LayoutEntry(uuid: $0.key, origin: $0.value) }
+        do {
+            try DisplayHardware.applyLayout(entries, permanent: true, mirroring: false)
+            notice = message
+        } catch { errorMessage = error.localizedDescription }
+        refresh()
+    }
+
+    func setMain(_ display: ConnectedDisplay) {
+        refresh()
+        guard isIdle, let display = self.display(display.id), !display.isMain else { return }
+        guard display.mirrorOf == nil else { errorMessage = "미러링된 모니터는 주 모니터로 지정할 수 없습니다. 미러링 원본을 선택해 주세요."; return }
+        let origins = Dictionary(uniqueKeysWithValues: arrangeable.map { ($0.uuid, $0.bounds.origin) })
+        applyOrigins(DisplayArrangement.normalized(origins, main: display.uuid),
+                     notice: "\(display.name)을(를) 주 모니터로 설정했습니다. 메뉴 막대와 Dock이 이 모니터로 이동합니다.")
+    }
+
+    /// Moves a display by a drag distance in global points, snapping it to the nearest free edge.
+    func move(_ display: ConnectedDisplay, by delta: CGSize) {
+        guard isIdle, let display = self.display(display.id), display.mirrorOf == nil,
+              let main = arrangeable.first(where: \.isMain) ?? arrangeable.first else { return }
+        let dropped = display.bounds.offsetBy(dx: delta.width, dy: delta.height)
+        let others = arrangeable.filter { $0.id != display.id }.map(\.bounds)
+        guard let origin = DisplayArrangement.snap(dropped, others: others) else {
+            errorMessage = "이 위치에는 모니터를 놓을 수 없습니다. 다른 모니터의 가장자리에 붙여 주세요."
+            return
+        }
+        guard origin != display.bounds.origin else { return }
+        var origins = Dictionary(uniqueKeysWithValues: arrangeable.map { ($0.uuid, $0.bounds.origin) })
+        origins[display.uuid] = origin
+        applyOrigins(DisplayArrangement.normalized(origins, main: main.uuid), notice: "모니터 배치를 저장했습니다.")
+    }
+
+    func setMirroring(_ enabled: Bool) {
+        refresh()
+        guard enabled != isMirroring, displays.count > 1 else { return }
+        if enabled {
+            let source = selected.flatMap { $0.mirrorOf == nil ? $0 : display($0.mirrorOf) } ?? arrangeable.first(where: \.isMain)
+            guard let source else { return }
+            previewLayout(DisplayArrangement.mirrorAll(snapshot(), to: source.uuid),
+                          summary: "모든 모니터가 \(source.name) 화면을 미러링합니다.")
+        } else {
+            previewLayout(DisplayArrangement.extendAll(snapshot()), summary: "모든 모니터를 확장 화면으로 사용합니다.")
+        }
+    }
+
+    func mirror(_ display: ConnectedDisplay, of source: ConnectedDisplay?) {
+        refresh()
+        guard display.mirrorOf != source?.id else { return }
+        previewLayout(DisplayArrangement.mirroring(snapshot(), display: display.uuid, of: source?.uuid),
+                      summary: source.map { "\(display.name)이(가) \($0.name) 화면을 미러링합니다." } ?? "\(display.name)을(를) 확장 화면으로 사용합니다.")
+    }
+
+    /// Mirroring can change modes and output signals, so it uses the same timed confirmation as resolution changes.
+    private func previewLayout(_ entries: [LayoutEntry], summary: String) {
+        guard isIdle else { return }
+        let original = snapshot()
+        do {
+            let marker = try RecoveryWatchdog.startLayout(snapshot: original)
+            layoutPending = LayoutPreview(snapshot: original, marker: marker, deadline: Date().addingTimeInterval(15), summary: summary)
+            remainingSeconds = 15
+            do { try DisplayHardware.applyLayout(entries, permanent: false, mirroring: true) }
+            catch { revertLayout(); throw error }
+            refresh()
+            timer?.invalidate()
+            timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, let preview = self.layoutPending else { return }
+                    self.remainingSeconds = max(0, Int(ceil(preview.deadline.timeIntervalSinceNow)))
+                    if self.remainingSeconds == 0 { self.revertLayout() }
+                }
+            }
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func keepLayout() {
+        guard let preview = layoutPending else { return }
+        refresh()
+        do {
+            var current = snapshot()
+            for i in current.indices { current[i].modeID = nil }
+            try DisplayHardware.applyLayout(current, permanent: true, mirroring: true)
+            try FileManager.default.removeItem(at: preview.marker)
+            finishLayout()
+            notice = "모니터 배치를 저장했습니다."
+        } catch { errorMessage = error.localizedDescription; revertLayout() }
+    }
+
+    func revertLayout() {
+        guard let preview = layoutPending else { return }
+        do {
+            try DisplayHardware.applyLayout(preview.snapshot, permanent: false, mirroring: true)
+            try? FileManager.default.removeItem(at: preview.marker)
+            notice = "이전 모니터 배치로 복구했습니다."
+        } catch { errorMessage = error.localizedDescription }
+        // On failure, the marker stays so the independent watchdog keeps retrying.
+        finishLayout()
+    }
+
+    private func finishLayout() {
+        timer?.invalidate(); timer = nil
+        layoutPending = nil
+        refresh()
+    }
+
     private func finishPreview() {
         timer?.invalidate(); timer = nil
         pending = nil
@@ -168,7 +299,7 @@ import SwiftUI
 
     var diagnosticText: String {
         displays.map { display in
-            "\(display.name)\nUUID: \(display.uuid)\nModel: \(display.identity.modelKey)\nUI: \(display.active.sizeLabel) \(display.active.isHiDPI ? "HiDPI" : "LoDPI")\nRender: \(display.active.pixelWidth) × \(display.active.pixelHeight)\nSignal: \(display.signal?.label ?? "확인 불가")\nMode rate: \(display.active.frequencyLabel)\nAvailable modes: \(display.modes.count)"
+            "\(display.name)\nUUID: \(display.uuid)\nModel: \(display.identity.modelKey)\nUI: \(display.active.sizeLabel) \(display.active.isHiDPI ? "HiDPI" : "LoDPI")\nRender: \(display.active.pixelWidth) × \(display.active.pixelHeight)\nSignal: \(display.signal?.label ?? "확인 불가")\nMode rate: \(display.active.frequencyLabel)\nMain: \(display.isMain)\nBounds: \(Int(display.bounds.minX)), \(Int(display.bounds.minY)) \(Int(display.bounds.width)) × \(Int(display.bounds.height))\nMirrors: \(self.display(display.mirrorOf)?.name ?? "-")\nAvailable modes: \(display.modes.count)"
         }.joined(separator: "\n\n")
     }
 }

@@ -67,6 +67,10 @@ struct ConnectedDisplay: Identifiable {
     let signal: PhysicalSignal?
     let nativeWidth: Int
     let nativeHeight: Int
+    /// Global desktop frame (top-left origin, points). Mirrored displays share their source's frame.
+    let bounds: CGRect
+    /// The display whose contents this one shows, when it is part of a mirror set.
+    let mirrorOf: CGDirectDisplayID?
 
     var matchingResolutions: [DisplayMode] {
         var seen = Set<String>()

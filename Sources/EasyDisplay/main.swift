@@ -40,15 +40,24 @@ struct EasyDisplayApp: App {
                     Text("\(display.name) · \(display.active.sizeLabel)\(display.active.isHiDPI ? " HiDPI" : "")")
                 }
             }
+            if controller.displays.count > 1 {
+                Divider()
+                Button(controller.isMirroring ? "모든 모니터 확장" : "모든 모니터 미러링") {
+                    openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true)
+                    controller.setMirroring(!controller.isMirroring)
+                }.disabled(!controller.isIdle)
+            }
             Divider()
             Button("모니터 새로고침") { controller.refresh() }
-            Button("종료") { controller.rollback(); NSApp.terminate(nil) }.keyboardShortcut("q", modifiers: .command)
+            Button("종료") { controller.rollback(); controller.revertLayout(); NSApp.terminate(nil) }.keyboardShortcut("q", modifiers: .command)
         }
     }
 }
 
 if CommandLine.arguments.dropFirst().first == "--watchdog" {
     exit(RecoveryWatchdog.run(arguments: CommandLine.arguments))
+} else if CommandLine.arguments.dropFirst().first == "--layout-watchdog" {
+    exit(RecoveryWatchdog.runLayout(arguments: CommandLine.arguments))
 } else if CommandLine.arguments.dropFirst().first == "--diagnose" {
     MainActor.assumeIsolated {
         let controller = DisplayController()

@@ -21,7 +21,8 @@ struct ContentView: View {
                                 .font(.title2).foregroundStyle(controller.selectedID == display.id ? Color.mint : Color.secondary)
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(display.name).fontWeight(.medium).lineLimit(1)
-                                Text("\(display.active.sizeLabel) · \(display.active.isHiDPI ? "HiDPI" : "일반")")
+                                Text(display.mirrorOf.flatMap { controller.display($0) }.map { "\($0.name) 미러링" }
+                                     ?? "\(display.active.sizeLabel) · \(display.active.isHiDPI ? "HiDPI" : "일반")")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 0)
@@ -30,7 +31,7 @@ struct ContentView: View {
                             .background(controller.selectedID == display.id ? Color.mint.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
                             .contentShape(Rectangle())
                     }.buttonStyle(.plain).listRowSeparator(.hidden)
-                        .disabled(controller.pending != nil)
+                        .disabled(controller.pending != nil || controller.layoutPending != nil)
                 }.listStyle(.sidebar)
                 HStack {
                     Label("\(controller.displays.count)개 연결됨", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.secondary)
@@ -53,6 +54,7 @@ struct ContentView: View {
                                 Button { controller.notice = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel("안내 닫기")
                             }.padding(14).background(Color.mint.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
                         }
+                        if controller.displays.count > 1 { ArrangementCard() }
                         modeCard(display)
                         customCard(display)
                         Text("HiDPI는 글자와 UI를 더 많은 픽셀로 그린 뒤 화면에 맞춥니다. 최종 선명도는 모니터의 실제 픽셀 밀도에 따라 달라집니다.")
@@ -76,6 +78,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: Binding(get: { controller.pending != nil }, set: { if !$0 { controller.rollback() } })) { previewSheet }
         .sheet(isPresented: $controller.showCustom) { customSheet }
+        .sheet(isPresented: Binding(get: { controller.layoutPending != nil }, set: { if !$0 { controller.revertLayout() } })) { layoutSheet }
         .alert("설정을 변경하지 못했습니다", isPresented: Binding(get: { controller.errorMessage != nil }, set: { if !$0 { controller.errorMessage = nil } })) {
             Button("확인", role: .cancel) { controller.errorMessage = nil }
         } message: { Text(controller.errorMessage ?? "") }
@@ -139,7 +142,7 @@ struct ContentView: View {
             }
             Toggle("일반 배율(LoDPI) 모드도 표시", isOn: $controller.showLoDPI).font(.callout)
             if display.isMirrored {
-                Label("미러링 중에는 변경할 수 없습니다. macOS 디스플레이 설정에서 미러링을 해제해 주세요.", systemImage: "rectangle.on.rectangle").font(.caption).foregroundStyle(.orange)
+                Label("미러링 중에는 변경할 수 없습니다. ‘여러 모니터 배치’에서 확장으로 바꾼 뒤 설정해 주세요.", systemImage: "rectangle.on.rectangle").font(.caption).foregroundStyle(.orange)
             }
             Divider()
             HStack(alignment: .center) {
@@ -155,7 +158,7 @@ struct ContentView: View {
                           : "선택한 설정을 적용하고 유지 여부를 확인합니다.")
                     .disabled(controller.selectedMode == nil || controller.selectedMode?.selectionKey == display.active.selectionKey || controller.busy || display.isMirrored)
             }
-        }.padding(20).background(cardBackground).disabled(controller.pending != nil)
+        }.padding(20).background(cardBackground).disabled(controller.pending != nil || controller.layoutPending != nil)
     }
 
     private func customCard(_ display: ConnectedDisplay) -> some View {
@@ -198,6 +201,21 @@ struct ContentView: View {
             HStack(spacing: 12) {
                 Button("이전 설정으로 복구", role: .cancel) { controller.rollback() }.keyboardShortcut(.cancelAction)
                 Button("이 설정 유지") { controller.keep() }.buttonStyle(.borderedProminent).tint(.mint)
+            }.controlSize(.large)
+        }.padding(32).frame(width: 480).interactiveDismissDisabled()
+    }
+
+    private var layoutSheet: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "rectangle.3.group").font(.system(size: 42)).foregroundStyle(.mint)
+            Text("이 모니터 배치를 유지할까요?").font(.title2.bold())
+            Text(controller.layoutPending?.summary ?? "").multilineTextAlignment(.center)
+            Text("화면이 보이지 않거나 모니터 경고가 나타나면 기다리세요. 자동으로 복구됩니다.")
+                .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Text("\(controller.remainingSeconds)초 후 이전 배치로 자동 복구").monospacedDigit().foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Button("이전 배치로 복구", role: .cancel) { controller.revertLayout() }.keyboardShortcut(.cancelAction)
+                Button("이 배치 유지") { controller.keepLayout() }.buttonStyle(.borderedProminent).tint(.mint)
             }.controlSize(.large)
         }.padding(32).frame(width: 480).interactiveDismissDisabled()
     }

@@ -14,11 +14,7 @@ enum DisplayHardware {
     }
 
     static func displayID(uuid: String) -> CGDirectDisplayID? {
-        var count: UInt32 = 0
-        guard CGGetOnlineDisplayList(0, nil, &count) == .success else { return nil }
-        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
-        guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return nil }
-        return ids.first { self.uuid($0) == uuid }
+        onlineIDs().first { self.uuid($0) == uuid }
     }
 
     static func modes(_ id: CGDirectDisplayID) -> [CGDisplayMode] {
@@ -44,27 +40,85 @@ enum DisplayHardware {
         }
     }
 
+    static func onlineIDs() -> [CGDirectDisplayID] {
+        var count: UInt32 = 0
+        guard CGGetOnlineDisplayList(0, nil, &count) == .success else { return [] }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return [] }
+        return Array(ids.prefix(Int(count)))
+    }
+
+    /// Mirrored displays have no NSScreen, so names seen earlier are remembered by UUID.
+    @MainActor private static var names: [String: String] = [:]
+
     @MainActor static func displays() -> [ConnectedDisplay] {
         let links = physicalLinks()
-        return NSScreen.screens.compactMap { screen in
-            guard let n = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
-            let id = n.uint32Value
+        for screen in NSScreen.screens {
+            if let n = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber, let uuid = uuid(n.uint32Value) {
+                names[uuid] = screen.localizedName
+            }
+        }
+        return onlineIDs().compactMap { id in
             guard let active = CGDisplayCopyDisplayMode(id), let uuid = uuid(id) else { return nil }
             let identity = identity(id)
             let candidates = links.filter { $0.identity.vendor == identity.vendor && $0.identity.product == identity.product }
             let link = candidates.first { $0.identity.serial == identity.serial } ?? (candidates.count == 1 ? candidates.first : nil)
+            let isBuiltin = CGDisplayIsBuiltin(id) != 0
+            let master = CGDisplayMirrorsDisplay(id)
+            let name = names[uuid] ?? link?.name ?? (isBuiltin ? "내장 디스플레이" : "모니터 \(identity.modelKey)")
             return ConnectedDisplay(
-                id: id, uuid: uuid, identity: identity, name: screen.localizedName,
-                isBuiltin: CGDisplayIsBuiltin(id) != 0, isMain: CGDisplayIsMain(id) != 0,
+                id: id, uuid: uuid, identity: identity, name: name,
+                isBuiltin: isBuiltin, isMain: CGDisplayIsMain(id) != 0,
                 isMirrored: CGDisplayIsInMirrorSet(id) != 0,
                 active: DisplayMode(active), modes: DisplayMode.distinct(modes(id).map(DisplayMode.init)),
-                signal: link?.signal, nativeWidth: link?.nativeWidth ?? 0, nativeHeight: link?.nativeHeight ?? 0
+                signal: link?.signal, nativeWidth: link?.nativeWidth ?? 0, nativeHeight: link?.nativeHeight ?? 0,
+                bounds: CGDisplayBounds(id), mirrorOf: master == kCGNullDirectDisplay ? nil : master
             )
-        }.sorted { $0.isMain && !$1.isMain }
+        }.sorted {
+            if $0.isMain != $1.isMain { return $0.isMain }
+            return ($0.bounds.minX, $0.bounds.minY) < ($1.bounds.minX, $1.bounds.minY)
+        }
+    }
+
+    /// Applies origins (and mirror sets when `mirroring`) in one transaction, then requested modes.
+    static func applyLayout(_ entries: [LayoutEntry], permanent: Bool, mirroring: Bool) throws {
+        let ids = Dictionary(entries.compactMap { e in displayID(uuid: e.uuid).map { (e.uuid, $0) } }, uniquingKeysWith: { a, _ in a })
+        guard !ids.isEmpty else { throw DisplayError.message("모니터를 찾지 못했습니다. 연결 상태를 확인해 주세요.") }
+        var configuration: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&configuration) == .success, let configuration else {
+            throw DisplayError.message("디스플레이 설정을 시작하지 못했습니다.")
+        }
+        for entry in entries {
+            guard let id = ids[entry.uuid] else { continue }
+            let master = entry.mirrorOf.flatMap { ids[$0] } ?? kCGNullDirectDisplay
+            if mirroring {
+                let result = CGConfigureDisplayMirrorOfDisplay(configuration, id, master)
+                guard result == .success else {
+                    CGCancelDisplayConfiguration(configuration)
+                    throw DisplayError.message("미러링 설정을 바꾸지 못했습니다. (오류 \(result.rawValue))")
+                }
+            }
+            if master == kCGNullDirectDisplay, let origin = entry.origin {
+                let result = CGConfigureDisplayOrigin(configuration, id, Int32(origin.x.rounded()), Int32(origin.y.rounded()))
+                guard result == .success else {
+                    CGCancelDisplayConfiguration(configuration)
+                    throw DisplayError.message("모니터 위치를 바꾸지 못했습니다. (오류 \(result.rawValue))")
+                }
+            }
+        }
+        let result = CGCompleteDisplayConfiguration(configuration, permanent ? .permanently : .forSession)
+        guard result == .success else { throw DisplayError.message("배치를 적용하지 못했습니다. (오류 \(result.rawValue))") }
+        // Mirroring may change modes; restoring them is best effort once the mirror sets are settled.
+        for entry in entries {
+            guard let modeID = entry.modeID, let id = ids[entry.uuid],
+                  CGDisplayCopyDisplayMode(id)?.ioDisplayModeID != modeID else { continue }
+            try? configure(id: id, modeID: modeID, permanent: permanent)
+        }
     }
 
     private struct Link {
         let identity: DisplayIdentity
+        let name: String?
         let signal: PhysicalSignal
         let nativeWidth: Int
         let nativeHeight: Int
@@ -100,6 +154,7 @@ enum DisplayHardware {
                 return (h, v)
             }.max { $0.0 * $0.1 < $1.0 * $1.1 }
             result.append(Link(identity: .init(vendor: vendor.uint32Value, product: model.uint32Value, serial: serial),
+                               name: product["ProductName"] as? String,
                                signal: .init(width: width.intValue, height: height.intValue, refreshRate: hz),
                                nativeWidth: native?.0 ?? 0, nativeHeight: native?.1 ?? 0))
         }
