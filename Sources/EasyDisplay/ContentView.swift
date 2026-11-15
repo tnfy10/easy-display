@@ -5,6 +5,8 @@ struct ContentView: View {
     @EnvironmentObject private var controller: DisplayController
     @EnvironmentObject private var updater: Updater
 
+    @State private var showAllModes = false
+
     var body: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 20) {
@@ -16,36 +18,31 @@ struct ContentView: View {
                     }
                 }.padding(.horizontal, 16).padding(.top, 22)
                 List {
-                    Section {
-                    ForEach(controller.displays) { display in
-                    Button { controller.select(display) } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: display.isBuiltin ? "laptopcomputer" : "display")
-                                .font(.title2).foregroundStyle(controller.selectedID == display.id ? Color.mint : Color.secondary)
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(display.name).fontWeight(.medium).lineLimit(1)
-                                Text(display.mirrorOf.flatMap { controller.display($0) }.map { "\($0.name) 미러링" }
-                                     ?? "\(display.active.sizeLabel) · \(display.active.isHiDPI ? "HiDPI" : "일반")\(display.isPortrait ? " · 세로" : "")\(display.hdrEnabled ? " · HDR" : "")")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 0)
-                            if display.isMain { Image(systemName: "star.fill").font(.caption2).foregroundStyle(.secondary).accessibilityLabel("주 모니터") }
-                        }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                            .background(controller.selectedID == display.id ? Color.mint.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
-                            .contentShape(Rectangle())
-                    }.buttonStyle(.plain).listRowSeparator(.hidden)
-                        .disabled(controller.pending != nil || controller.layoutPending != nil)
+                    if controller.displays.count > 1 {
+                        Section {
+                            sidebarRow(icon: "rectangle.3.group", title: "모니터 배치",
+                                       detail: controller.isMirroring ? "미러링 사용 중" : "확장 · \(controller.displays.count)대",
+                                       selected: controller.showingArrangement) { controller.openArrangement() }
+                        }
                     }
-                    } header: {
+                    Section {
+                        // A plain row, not a section header: clicking a sidebar header collapses the whole list.
                         HStack {
-                            Text("모니터")
+                            Text("모니터").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                             Spacer()
                             Button {
                                 controller.refresh()
                                 controller.notice = "모니터 \(controller.displays.count)개를 다시 확인했습니다."
                             } label: { Image(systemName: "arrow.clockwise") }
                                 .buttonStyle(.borderless).help("모니터 목록 새로고침").accessibilityLabel("모니터 목록 새로고침")
-                                .disabled(controller.pending != nil || controller.layoutPending != nil)
+                                .disabled(!controller.isIdle)
+                        }.padding(.horizontal, 10).listRowSeparator(.hidden)
+                        ForEach(controller.displays) { display in
+                            sidebarRow(icon: display.isBuiltin ? "laptopcomputer" : "display", title: display.name,
+                                       detail: display.mirrorOf.flatMap { controller.display($0) }.map { "\($0.name) 미러링" }
+                                           ?? "\(display.active.sizeLabel) · \(display.active.isHiDPI ? "HiDPI" : "일반")\(display.isPortrait ? " · 세로" : "")\(display.hdrEnabled ? " · HDR" : "")",
+                                       selected: !controller.showingArrangement && controller.selectedID == display.id,
+                                       isMain: display.isMain) { controller.open(display) }
                         }
                     }
                 }.listStyle(.sidebar)
@@ -71,38 +68,31 @@ struct ContentView: View {
                 }.padding(16)
             }.navigationSplitViewColumnWidth(min: 235, ideal: 260, max: 310)
         } detail: {
-            if let display = controller.selected {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        UpdateBanner()
+            Group {
+                if controller.showingArrangement || controller.selected != nil {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 22) {
+                            UpdateBanner()
+                            ForEach(controller.visibleStalledPorts) { portWarning($0) }
+                            if controller.showingArrangement {
+                                arrangementPage
+                            } else if let display = controller.selected {
+                                displayPage(display)
+                            }
+                        }.padding(30).frame(maxWidth: 900, alignment: .leading).frame(maxWidth: .infinity)
+                    }.background(Color(nsColor: .windowBackgroundColor))
+                } else {
+                    VStack(spacing: 22) {
                         ForEach(controller.visibleStalledPorts) { portWarning($0) }
-                        header(display)
-                        signalCard(display)
-                        if let notice = controller.notice {
-                            HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.mint)
-                                Text(notice).font(.callout).textSelection(.enabled)
-                                Spacer()
-                                Button { controller.notice = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel("안내 닫기")
-                            }.padding(14).background(Color.mint.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                        }
-                        if controller.displays.count > 1 { ArrangementCard() }
-                        modeCard(display)
-                        if display.canRotate { rotationCard(display) }
-                        if display.supportsHDR { hdrCard(display) }
-                        customCard(display)
-                        Text("HiDPI는 글자와 UI를 더 많은 픽셀로 그린 뒤 화면에 맞춥니다. 최종 선명도는 모니터의 실제 픽셀 밀도에 따라 달라집니다.")
-                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    }.padding(30).frame(maxWidth: 900, alignment: .leading).frame(maxWidth: .infinity)
-                }.background(Color(nsColor: .windowBackgroundColor))
-            } else {
-                VStack(spacing: 22) {
-                    ForEach(controller.visibleStalledPorts) { portWarning($0) }
-                    ContentUnavailableView("연결된 모니터가 없습니다", systemImage: "display.trianglebadge.exclamationmark", description: Text("모니터를 연결한 뒤 새로고침해 주세요."))
-                }.padding(30).frame(maxWidth: 900)
+                        ContentUnavailableView("연결된 모니터가 없습니다", systemImage: "display.trianglebadge.exclamationmark", description: Text("모니터를 연결하면 자동으로 나타납니다."))
+                    }.padding(30).frame(maxWidth: 900)
+                }
             }
+            .overlay(alignment: .top) { toast }
+            .animation(.snappy, value: controller.notice)
         }
         .frame(minWidth: 880, minHeight: 700)
+        .onChange(of: controller.selectedID) { showAllModes = false }
         .toolbar {
             ToolbarItem {
                 Button {
@@ -122,6 +112,94 @@ struct ContentView: View {
         .confirmationDialog("등록 전 HiDPI 설정으로 복원할까요?", isPresented: $controller.showRestoreConfirmation) {
             Button("등록 전 설정 복원", role: .destructive) { controller.restoreOverride() }
         } message: { Text("이 앱이 처음 등록하기 전 파일로 되돌립니다. 관리자 인증과 재시동이 필요합니다.") }
+    }
+
+    private func sidebarRow(icon: String, title: String, detail: String, selected: Bool, isMain: Bool = false,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon).font(.title2).foregroundStyle(selected ? Color.mint : Color.secondary).frame(width: 28)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title).fontWeight(.medium).lineLimit(1)
+                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if isMain { Image(systemName: "star.fill").font(.caption2).foregroundStyle(.secondary).help("주 모니터").accessibilityLabel("주 모니터") }
+            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .background(selected ? Color.mint.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain).listRowSeparator(.hidden)
+            .disabled(!controller.isIdle)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// Short confirmations float over the page and fade out, so they are seen wherever it is scrolled.
+    @ViewBuilder private var toast: some View {
+        if let notice = controller.notice {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.mint)
+                Text(notice).font(.callout).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 11)
+            .frame(maxWidth: 520)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+            .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+            .padding(.top, 14).padding(.horizontal, 30)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .onTapGesture { controller.notice = nil }
+            .help("클릭하면 닫힙니다")
+            .task(id: notice) {
+                AccessibilityNotification.Announcement(notice).post()
+                // Longer messages (e.g. "restart to finish") stay up longer.
+                try? await Task.sleep(for: .seconds(min(12, 3.5 + Double(notice.count) * 0.08)))
+                if controller.notice == notice { controller.notice = nil }
+            }
+        }
+    }
+
+    private var arrangementPage: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("모니터 배치").font(.system(size: 28, weight: .bold))
+                Text("모든 모니터에 함께 적용되는 설정입니다. 모니터별 해상도는 왼쪽에서 모니터를 선택하세요.")
+                    .foregroundStyle(.secondary)
+            }
+            ArrangementCard()
+        }
+    }
+
+    @ViewBuilder private func displayPage(_ display: ConnectedDisplay) -> some View {
+        header(display)
+        signalCard(display)
+        if let source = controller.display(display.mirrorOf) {
+            mirrorCard(display, source: source)
+        } else {
+            modeCard(display)
+            if display.canRotate { rotationCard(display) }
+            if display.supportsHDR { hdrCard(display) }
+            customCard(display)
+            Text("HiDPI는 글자와 UI를 더 많은 픽셀로 그린 뒤 화면에 맞춥니다. 최종 선명도는 모니터의 실제 픽셀 밀도에 따라 달라집니다.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// A mirror copy has no settings of its own, so one card explains why and offers the two ways out.
+    private func mirrorCard(_ display: ConnectedDisplay, source: ConnectedDisplay) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("‘\(source.name)’ 화면을 복제하는 중", systemImage: "rectangle.on.rectangle").font(.headline)
+            Text("이 모니터는 원본 모니터의 화면을 그대로 보여 주고 있어서 해상도, 화면 방향, HDR을 따로 바꿀 수 없어요. 원본 모니터에서 바꾸거나 이 모니터를 독립 화면으로 전환하세요.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Button("원본 모니터 설정 열기") { controller.open(source) }
+                Button("독립 화면으로 전환") { controller.mirror(display, of: nil) }
+                    .buttonStyle(.borderedProminent).tint(.mint)
+                    .help("확장 화면으로 바꾼 뒤 15초 안에 유지 여부를 확인합니다.")
+            }.controlSize(.large)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20).background(cardBackground)
+        .disabled(!controller.isIdle)
     }
 
     private func portWarning(_ port: StalledPort) -> some View {
@@ -187,21 +265,39 @@ struct ContentView: View {
     }
 
     private func modeCard(_ display: ConnectedDisplay) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
+        let steps = controller.scaledResolutions
+        return VStack(alignment: .leading, spacing: 18) {
             Label("해상도와 배율", systemImage: "slider.horizontal.3").font(.headline)
-            Text("화면 크기와 주사율을 선택한 뒤 ‘설정 적용’을 누르세요.")
-                .font(.callout).foregroundStyle(.secondary)
-            Picker("화면 크기", selection: Binding(get: { controller.selectedResolutionKey }, set: { controller.selectedResolutionKey = $0 })) {
-                ForEach(controller.availableResolutions) { mode in
-                    Text("\(mode.sizeLabel)  ·  \(mode.isHiDPI ? "HiDPI" : "일반 배율")").tag(mode.resolutionKey)
+            if steps.count > 1 {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label("텍스트 크게", systemImage: "textformat.size.larger")
+                        Spacer()
+                        Label("공간 넓게", systemImage: "rectangle.expand.vertical")
+                    }.font(.caption).foregroundStyle(.secondary)
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                        ForEach(Array(steps.enumerated()), id: \.element.id) { index, mode in
+                            resolutionTile(mode, display: display, emphasis: steps.count > 1 ? 1 - Double(index) / Double(steps.count - 1) : 0.5)
+                        }
+                    }
                 }
+            }
+            if steps.count > 1 {
+                DisclosureGroup("모든 해상도 보기", isExpanded: $showAllModes) { allModeControls.padding(.top, 8) }
+                    .font(.callout)
+            } else {
+                allModeControls
             }
             Picker("주사율", selection: $controller.selectedModeID) {
                 ForEach(controller.frequencies) { mode in Text(mode.frequencyLabel).tag(Optional(mode.id)) }
             }
-            Toggle("일반 배율(LoDPI) 모드도 표시", isOn: $controller.showLoDPI).font(.callout)
             if display.isMirrored {
-                Label("미러링 중에는 변경할 수 없습니다. ‘여러 모니터 배치’에서 확장으로 바꾼 뒤 설정해 주세요.", systemImage: "rectangle.on.rectangle").font(.caption).foregroundStyle(.orange)
+                HStack(spacing: 10) {
+                    Label("미러링 중에는 해상도를 바꿀 수 없습니다. ‘모니터 배치’에서 확장으로 바꾼 뒤 설정해 주세요.", systemImage: "rectangle.on.rectangle")
+                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("모니터 배치 열기") { controller.openArrangement() }.font(.caption)
+                }
             }
             Divider()
             HStack(alignment: .center) {
@@ -218,6 +314,53 @@ struct ContentView: View {
                     .disabled(controller.selectedMode == nil || controller.selectedMode?.selectionKey == display.active.selectionKey || controller.busy || display.isMirrored)
             }
         }.padding(20).background(cardBackground).disabled(controller.pending != nil || controller.layoutPending != nil)
+    }
+
+    private var allModeControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("화면 크기", selection: Binding(get: { controller.selectedResolutionKey }, set: { controller.selectedResolutionKey = $0 })) {
+                ForEach(controller.availableResolutions) { mode in
+                    Text("\(mode.sizeLabel)  ·  \(mode.isHiDPI ? "HiDPI" : "일반 배율")").tag(mode.resolutionKey)
+                }
+            }
+            Toggle("일반 배율(LoDPI) 모드도 표시", isOn: $controller.showLoDPI).font(.callout)
+        }
+    }
+
+    /// One step of the text-size scale; the "Aa" shrinks as the desktop gets more space.
+    private func resolutionTile(_ mode: DisplayMode, display: ConnectedDisplay, emphasis: Double) -> some View {
+        let selected = controller.selectedMode?.resolutionKey == mode.resolutionKey
+        let isCurrent = display.active.resolutionKey == mode.resolutionKey
+        let crisp = display.nativeWidth > 0
+            && Set([mode.pixelWidth, mode.pixelHeight]) == Set([display.nativeWidth, display.nativeHeight])
+        return Button { controller.selectedResolutionKey = mode.resolutionKey } label: {
+            VStack(spacing: 6) {
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.2), lineWidth: 1))
+                    .overlay(Text("Aa").font(.system(size: 9 + 13 * emphasis, weight: .semibold)).foregroundStyle(.secondary))
+                    .frame(height: 44)
+                Text(mode.sizeLabel).font(.caption.weight(.medium)).monospacedDigit().lineLimit(1)
+                HStack(spacing: 4) {
+                    if isCurrent { badge("현재", color: .secondary) }
+                    if crisp { badge("가장 선명", color: .mint) }
+                }.frame(height: 14)
+            }
+            .padding(8).frame(maxWidth: .infinity)
+            .background(selected ? Color.mint.opacity(0.14) : Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected ? Color.mint : Color.clear, lineWidth: 1.5))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(crisp ? "패널 픽셀과 1:1로 그려 가장 선명합니다." : "\(mode.pixelWidth) × \(mode.pixelHeight)로 렌더링합니다.")
+        .accessibilityLabel("\(mode.sizeLabel)\(isCurrent ? ", 현재 설정" : "")\(crisp ? ", 가장 선명" : "")")
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
+    private func badge(_ text: String, color: Color) -> some View {
+        Text(text).font(.system(size: 9, weight: .semibold)).foregroundStyle(color)
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(color.opacity(0.12), in: Capsule())
     }
 
     private func rotationCard(_ display: ConnectedDisplay) -> some View {
@@ -240,14 +383,10 @@ struct ContentView: View {
             }
             Text("모니터를 세로로 세워 쓸 때 화면을 회전합니다. 바꾼 뒤 15초 안에 유지를 누르지 않으면 이전 방향으로 돌아갑니다.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if display.mirrorOf != nil {
-                Label("미러링된 모니터는 방향을 바꿀 수 없습니다. 미러링 원본 모니터에서 설정해 주세요.", systemImage: "rectangle.on.rectangle")
-                    .font(.caption).foregroundStyle(.orange)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20).background(cardBackground)
-        .disabled(!controller.isIdle || display.mirrorOf != nil)
+        .disabled(!controller.isIdle)
     }
 
     private func hdrCard(_ display: ConnectedDisplay) -> some View {
@@ -260,14 +399,10 @@ struct ContentView: View {
             }
             Text("HDR 영상·사진·게임을 더 넓은 밝기와 색 범위로 표시합니다. 켜면 일반 화면이 어둡거나 색이 다르게 보일 수 있어요. 바꾼 뒤 15초 안에 유지를 누르지 않으면 이전 설정으로 돌아갑니다.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if display.mirrorOf != nil {
-                Label("미러링된 모니터는 HDR을 바꿀 수 없습니다. 미러링 원본 모니터에서 설정해 주세요.", systemImage: "rectangle.on.rectangle")
-                    .font(.caption).foregroundStyle(.orange)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20).background(cardBackground)
-        .disabled(!controller.isIdle || display.mirrorOf != nil)
+        .disabled(!controller.isIdle)
     }
 
     private func customCard(_ display: ConnectedDisplay) -> some View {

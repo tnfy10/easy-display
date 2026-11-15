@@ -44,7 +44,7 @@ struct EasyDisplayApp: App {
             }
             ForEach(controller.displays) { display in
                 Button {
-                    controller.select(display); openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true)
+                    controller.open(display); openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true)
                 } label: {
                     Text("\(display.name) · \(display.active.sizeLabel)\(display.active.isHiDPI ? " HiDPI" : "")")
                 }

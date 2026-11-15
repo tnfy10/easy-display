@@ -4,6 +4,8 @@ import SwiftUI
 @MainActor final class DisplayController: ObservableObject {
     @Published var displays: [ConnectedDisplay] = []
     @Published var selectedID: CGDirectDisplayID?
+    /// The sidebar's "모니터 배치" page instead of a single monitor's settings.
+    @Published var showingArrangement = false
     @Published var selectedModeID: Int32?
     @Published var showLoDPI = false
     @Published var errorMessage: String?
@@ -59,6 +61,28 @@ import SwiftUI
             selectedModeID = candidates.min { abs($0.refreshRate - display.active.refreshRate) < abs($1.refreshRate - display.active.refreshRate) }?.id
         }
     }
+    /// HiDPI sizes in the current aspect ratio, from largest text to most space, like System Settings.
+    var scaledResolutions: [DisplayMode] {
+        guard let display = selected, display.active.height > 0 else { return [] }
+        let aspect = Double(display.active.width) / Double(display.active.height)
+        let current = display.active.resolutionKey
+        let all = display.matchingResolutions.filter { mode in
+            (mode.isHiDPI || mode.resolutionKey == current) && mode.height > 0
+                && abs(Double(mode.width) / Double(mode.height) - aspect) < 0.02
+                // Desktops narrower than 1024 points are too cramped to offer as a step.
+                && (min(mode.width, mode.height) >= 576 || mode.resolutionKey == current)
+        }.sorted { $0.width < $1.width }
+        // Keep the scale short like System Settings: evenly spaced steps plus the current and sharpest sizes.
+        let limit = 8
+        guard all.count > limit else { return all }
+        var keep = Set((0..<limit).map { Int((Double($0) * Double(all.count - 1) / Double(limit - 1)).rounded()) })
+        for (index, mode) in all.enumerated() where mode.resolutionKey == current
+            || Set([mode.pixelWidth, mode.pixelHeight]) == Set([display.nativeWidth, display.nativeHeight]) {
+            keep.insert(index)
+        }
+        return keep.sorted().map { all[$0] }
+    }
+
     var frequencies: [DisplayMode] {
         guard let key = selectedMode?.resolutionKey else { return [] }
         return selected?.modes.filter { $0.resolutionKey == key } ?? []
@@ -80,6 +104,7 @@ import SwiftUI
     func refresh() {
         displays = DisplayHardware.displays()
         if !displays.contains(where: { $0.id == selectedID }) { selectedID = displays.first?.id }
+        if displays.count < 2 { showingArrangement = false }
         if let display = selected, !display.modes.contains(where: { $0.id == selectedModeID }) {
             selectedModeID = display.modes.first(where: { $0.selectionKey == display.active.selectionKey })?.id
         }
@@ -106,6 +131,18 @@ import SwiftUI
         guard pending == nil, layoutPending == nil else { return }
         selectedID = display.id
         selectedModeID = display.modes.first { $0.selectionKey == display.active.selectionKey }?.id
+    }
+
+    /// Selects a display and shows its settings page.
+    func open(_ display: ConnectedDisplay) {
+        guard isIdle else { return }
+        select(display)
+        showingArrangement = false
+    }
+
+    func openArrangement() {
+        guard isIdle, displays.count > 1 else { return }
+        showingArrangement = true
     }
 
     func preview() {
