@@ -74,7 +74,7 @@ struct ArrangementCard: View {
     private var extendSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("모니터 위치 맞추기").font(.subheadline.weight(.semibold))
-            ArrangementCanvas().frame(height: 260)
+            ArrangementCanvas().frame(height: 300)
             HStack(spacing: 18) {
                 legend("hand.draw", "끌면 놓일 자리와 정렬선이 보여요")
                 legend("menubar.rectangle", "위쪽 막대 = 주 모니터")
@@ -192,8 +192,10 @@ struct ArrangementCanvas: View {
         GeometryReader { geometry in
             let items = controller.arrangeable
             let union = items.reduce(CGRect.null) { $0.union($1.bounds) }
-            // Leave room around the layout so displays can be dropped on any side.
-            let scale = union.isNull ? 1 : min(geometry.size.width / (union.width * 1.6), geometry.size.height / (union.height * 1.6))
+            // Leave room for the largest display on every side, so a drop target is never drawn off the canvas.
+            let margin = items.reduce(CGSize.zero) { CGSize(width: max($0.width, $1.bounds.width), height: max($0.height, $1.bounds.height)) }
+            let scale = union.isNull ? 1 : min(geometry.size.width / (union.width + margin.width * 2.1),
+                                               geometry.size.height / (union.height + margin.height * 2.1))
             let offset = CGPoint(x: (geometry.size.width - union.width * scale) / 2 - union.minX * scale,
                                  y: (geometry.size.height - union.height * scale) / 2 - union.minY * scale)
             let preview = dragPreview(items: items, scale: scale)
@@ -223,6 +225,7 @@ struct ArrangementCanvas: View {
                             })
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: 12))
             .coordinateSpace(name: "arrangement")
         }
     }
