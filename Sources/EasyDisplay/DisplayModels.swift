@@ -73,10 +73,27 @@ struct ConnectedDisplay: Identifiable {
     let mirrorOf: CGDirectDisplayID?
     let supportsHDR: Bool
     let hdrEnabled: Bool
+    let canRotate: Bool
+    /// Clockwise degrees: 0, 90, 180 or 270.
+    let rotation: Int
+    var isPortrait: Bool { rotation == 90 || rotation == 270 }
 
     var matchingResolutions: [DisplayMode] {
         var seen = Set<String>()
         return modes.filter { seen.insert($0.resolutionKey).inserted }
+    }
+}
+
+enum DisplayRotation: Int, CaseIterable, Identifiable {
+    case standard = 0, clockwise = 90, upsideDown = 180, counterClockwise = 270
+    var id: Int { rawValue }
+    var label: String {
+        switch self {
+        case .standard: "가로 (기본)"
+        case .clockwise: "세로 (90°)"
+        case .upsideDown: "가로 뒤집기 (180°)"
+        case .counterClockwise: "세로 (270°)"
+        }
     }
 }
 

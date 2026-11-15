@@ -80,6 +80,8 @@ if CommandLine.arguments.dropFirst().first == "--watchdog" {
     exit(RecoveryWatchdog.runLayout(arguments: CommandLine.arguments))
 } else if CommandLine.arguments.dropFirst().first == "--hdr-watchdog" {
     exit(RecoveryWatchdog.runHDR(arguments: CommandLine.arguments))
+} else if CommandLine.arguments.dropFirst().first == "--rotation-watchdog" {
+    exit(RecoveryWatchdog.runRotation(arguments: CommandLine.arguments))
 } else if CommandLine.arguments.dropFirst().first == "--diagnose" {
     MainActor.assumeIsolated {
         let controller = DisplayController()

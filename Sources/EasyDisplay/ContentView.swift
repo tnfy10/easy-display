@@ -23,7 +23,7 @@ struct ContentView: View {
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(display.name).fontWeight(.medium).lineLimit(1)
                                 Text(display.mirrorOf.flatMap { controller.display($0) }.map { "\($0.name) 미러링" }
-                                     ?? "\(display.active.sizeLabel) · \(display.active.isHiDPI ? "HiDPI" : "일반")\(display.hdrEnabled ? " · HDR" : "")")
+                                     ?? "\(display.active.sizeLabel) · \(display.active.isHiDPI ? "HiDPI" : "일반")\(display.isPortrait ? " · 세로" : "")\(display.hdrEnabled ? " · HDR" : "")")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 0)
@@ -67,6 +67,7 @@ struct ContentView: View {
                         }
                         if controller.displays.count > 1 { ArrangementCard() }
                         modeCard(display)
+                        if display.canRotate { rotationCard(display) }
                         if display.supportsHDR { hdrCard(display) }
                         customCard(display)
                         Text("HiDPI는 글자와 UI를 더 많은 픽셀로 그린 뒤 화면에 맞춥니다. 최종 선명도는 모니터의 실제 픽셀 밀도에 따라 달라집니다.")
@@ -196,6 +197,36 @@ struct ContentView: View {
                     .disabled(controller.selectedMode == nil || controller.selectedMode?.selectionKey == display.active.selectionKey || controller.busy || display.isMirrored)
             }
         }.padding(20).background(cardBackground).disabled(controller.pending != nil || controller.layoutPending != nil)
+    }
+
+    private func rotationCard(_ display: ConnectedDisplay) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("화면 방향", systemImage: display.isPortrait ? "rectangle.portrait" : "rectangle").font(.headline)
+                Spacer()
+                Picker("화면 방향", selection: Binding(
+                    get: { DisplayRotation(rawValue: display.rotation) ?? .standard },
+                    set: { controller.setRotation(display, to: $0) }
+                )) {
+                    ForEach(DisplayRotation.allCases) { Text($0.label).tag($0) }
+                }.labelsHidden().fixedSize()
+            }
+            HStack(spacing: 8) {
+                Button { controller.setRotation(display, to: .standard) } label: { Label("가로", systemImage: "rectangle") }
+                    .disabled(display.rotation == 0)
+                Button { controller.setRotation(display, to: .clockwise) } label: { Label("세로", systemImage: "rectangle.portrait") }
+                    .disabled(display.isPortrait)
+            }
+            Text("모니터를 세로로 세워 쓸 때 화면을 회전합니다. 바꾼 뒤 15초 안에 유지를 누르지 않으면 이전 방향으로 돌아갑니다.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if display.mirrorOf != nil {
+                Label("미러링된 모니터는 방향을 바꿀 수 없습니다. 미러링 원본 모니터에서 설정해 주세요.", systemImage: "rectangle.on.rectangle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20).background(cardBackground)
+        .disabled(!controller.isIdle || display.mirrorOf != nil)
     }
 
     private func hdrCard(_ display: ConnectedDisplay) -> some View {

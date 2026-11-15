@@ -37,6 +37,7 @@ import SwiftUI
         enum Original {
             case layout([LayoutEntry])
             case hdr(uuid: String, enabled: Bool)
+            case rotation(uuid: String, degrees: Int)
         }
         let original: Original
         let marker: URL
@@ -273,6 +274,19 @@ import SwiftUI
         } catch { errorMessage = error.localizedDescription }
     }
 
+    func setRotation(_ display: ConnectedDisplay, to rotation: DisplayRotation) {
+        refresh()
+        guard isIdle, let display = self.display(display.id), display.canRotate, display.mirrorOf == nil,
+              display.rotation != rotation.rawValue else { return }
+        do {
+            let marker = try RecoveryWatchdog.startRotation(uuid: display.uuid, originalDegrees: display.rotation)
+            layoutPending = LayoutPreview(original: .rotation(uuid: display.uuid, degrees: display.rotation), marker: marker,
+                                          deadline: Date().addingTimeInterval(15), title: "이 화면 방향을 유지할까요?",
+                                          summary: "\(display.name)의 화면 방향을 \(rotation.label)(으)로 바꿨습니다.")
+            try startTimedChange { try DisplayHardware.setRotation(id: display.id, degrees: rotation.rawValue) }
+        } catch { errorMessage = error.localizedDescription }
+    }
+
     private func startTimedChange(_ apply: () throws -> Void) throws {
         remainingSeconds = 15
         do { try apply() }
@@ -297,7 +311,7 @@ import SwiftUI
                 for i in current.indices { current[i].modeID = nil }
                 try DisplayHardware.applyLayout(current, permanent: true, mirroring: true)
             }
-            // HDR is stored by macOS as soon as it switches; confirming only stops the watchdog.
+            // HDR and rotation are stored by macOS as soon as they switch; confirming only stops the watchdog.
             try FileManager.default.removeItem(at: preview.marker)
             finishLayout()
             notice = "설정을 저장했습니다."
@@ -315,6 +329,11 @@ import SwiftUI
                     throw DisplayError.message("모니터가 분리되었습니다. 다시 연결되면 복구 프로세스가 재시도합니다.")
                 }
                 try DisplayHardware.setHDR(id: id, enabled: enabled)
+            case .rotation(let uuid, let degrees):
+                guard let id = DisplayHardware.displayID(uuid: uuid) else {
+                    throw DisplayError.message("모니터가 분리되었습니다. 다시 연결되면 복구 프로세스가 재시도합니다.")
+                }
+                try DisplayHardware.setRotation(id: id, degrees: degrees)
             }
             try? FileManager.default.removeItem(at: preview.marker)
             notice = "이전 설정으로 복구했습니다."
@@ -370,7 +389,7 @@ import SwiftUI
 
     var diagnosticText: String {
         displays.map { display in
-            "\(display.name)\nUUID: \(display.uuid)\nModel: \(display.identity.modelKey)\nUI: \(display.active.sizeLabel) \(display.active.isHiDPI ? "HiDPI" : "LoDPI")\nRender: \(display.active.pixelWidth) × \(display.active.pixelHeight)\nSignal: \(display.signal?.label ?? "확인 불가")\nMode rate: \(display.active.frequencyLabel)\nMain: \(display.isMain)\nBounds: \(Int(display.bounds.minX)), \(Int(display.bounds.minY)) \(Int(display.bounds.width)) × \(Int(display.bounds.height))\nMirrors: \(self.display(display.mirrorOf)?.name ?? "-")\nHDR: \(display.supportsHDR ? (display.hdrEnabled ? "on" : "off") : "unsupported")\nAvailable modes: \(display.modes.count)"
+            "\(display.name)\nUUID: \(display.uuid)\nModel: \(display.identity.modelKey)\nUI: \(display.active.sizeLabel) \(display.active.isHiDPI ? "HiDPI" : "LoDPI")\nRender: \(display.active.pixelWidth) × \(display.active.pixelHeight)\nSignal: \(display.signal?.label ?? "확인 불가")\nMode rate: \(display.active.frequencyLabel)\nMain: \(display.isMain)\nBounds: \(Int(display.bounds.minX)), \(Int(display.bounds.minY)) \(Int(display.bounds.width)) × \(Int(display.bounds.height))\nMirrors: \(self.display(display.mirrorOf)?.name ?? "-")\nRotation: \(display.rotation)°\(display.canRotate ? "" : " (fixed)")\nHDR: \(display.supportsHDR ? (display.hdrEnabled ? "on" : "off") : "unsupported")\nAvailable modes: \(display.modes.count)"
         }.joined(separator: "\n\n") + portDiagnostics
     }
 
