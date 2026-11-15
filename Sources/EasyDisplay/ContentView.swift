@@ -15,7 +15,9 @@ struct ContentView: View {
                         Text("내 화면에 맞게, 선명하게").font(.caption).foregroundStyle(.secondary)
                     }
                 }.padding(.horizontal, 16).padding(.top, 22)
-                List(controller.displays) { display in
+                List {
+                    Section {
+                    ForEach(controller.displays) { display in
                     Button { controller.select(display) } label: {
                         HStack(spacing: 12) {
                             Image(systemName: display.isBuiltin ? "laptopcomputer" : "display")
@@ -33,6 +35,19 @@ struct ContentView: View {
                             .contentShape(Rectangle())
                     }.buttonStyle(.plain).listRowSeparator(.hidden)
                         .disabled(controller.pending != nil || controller.layoutPending != nil)
+                    }
+                    } header: {
+                        HStack {
+                            Text("모니터")
+                            Spacer()
+                            Button {
+                                controller.refresh()
+                                controller.notice = "모니터 \(controller.displays.count)개를 다시 확인했습니다."
+                            } label: { Image(systemName: "arrow.clockwise") }
+                                .buttonStyle(.borderless).help("모니터 목록 새로고침").accessibilityLabel("모니터 목록 새로고침")
+                                .disabled(controller.pending != nil || controller.layoutPending != nil)
+                        }
+                    }
                 }.listStyle(.sidebar)
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
@@ -41,12 +56,18 @@ struct ContentView: View {
                             Label("\(controller.stalledPorts.count)개 포트 연결 실패", systemImage: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
                         }
-                        Button("v\(updater.currentVersion) · 업데이트 확인") { Task { await updater.check(userInitiated: true) } }
-                            .buttonStyle(.link).disabled(updater.phase != .idle)
+                        Text("v\(updater.currentVersion)")
                     }.font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    Button { controller.refresh() } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(.borderless).help("모니터 새로고침").accessibilityLabel("모니터 새로고침")
+                    if updater.phase == .checking {
+                        ProgressView().controlSize(.small).help("업데이트 확인 중")
+                    } else {
+                        Button { Task { await updater.check(userInitiated: true) } } label: {
+                            Label("업데이트 확인", systemImage: "arrow.down.circle")
+                        }
+                        .buttonStyle(.borderless).font(.caption)
+                        .help("새 버전이 있는지 확인합니다").disabled(updater.phase != .idle)
+                    }
                 }.padding(16)
             }.navigationSplitViewColumnWidth(min: 235, ideal: 260, max: 310)
         } detail: {
