@@ -350,8 +350,27 @@ import SwiftUI
             layoutPending = LayoutPreview(original: .rotation(uuid: display.uuid, degrees: display.rotation), marker: marker,
                                           deadline: Date().addingTimeInterval(15), title: "이 화면 방향을 유지할까요?",
                                           summary: "\(display.name)의 화면 방향을 \(rotation.label)(으)로 바꿨습니다.")
-            try startTimedChange { try DisplayHardware.setRotation(id: display.id, degrees: rotation.rawValue) }
+            try startTimedChange { try DisplayHardware.requestRotation(id: display.id, degrees: rotation.rawValue) }
+            confirmRotation(uuid: display.uuid, degrees: rotation.rawValue)
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    /// Waits for macOS to report the new rotation without blocking the main thread
+    /// (blocking it kept the reported value stale and turned every success into an error).
+    private func confirmRotation(uuid: String, degrees: Int) {
+        Task { @MainActor [weak self] in
+            for _ in 0..<40 {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard let self, case .rotation? = self.layoutPending?.original else { return }
+                if let id = DisplayHardware.displayID(uuid: uuid), DisplayHardware.rotation(id) == degrees {
+                    self.refresh()
+                    return
+                }
+            }
+            guard let self, case .rotation? = self.layoutPending?.original else { return }
+            self.errorMessage = "화면 방향을 바꾸지 못했습니다. 이 모니터가 회전을 지원하는지 확인해 주세요."
+            self.revertLayout()
+        }
     }
 
     private func startTimedChange(_ apply: () throws -> Void) throws {
@@ -400,9 +419,10 @@ import SwiftUI
                 guard let id = DisplayHardware.displayID(uuid: uuid) else {
                     throw DisplayError.message("모니터가 분리되었습니다. 다시 연결되면 복구 프로세스가 재시도합니다.")
                 }
-                try DisplayHardware.setRotation(id: id, degrees: degrees)
+                try DisplayHardware.requestRotation(id: id, degrees: degrees)
             }
-            try? FileManager.default.removeItem(at: preview.marker)
+            // A rotation is only requested here; its watchdog stays armed and confirms it was restored.
+            if case .rotation = preview.original {} else { try? FileManager.default.removeItem(at: preview.marker) }
             notice = "이전 설정으로 복구했습니다."
         } catch { errorMessage = error.localizedDescription }
         // On failure, the marker stays so the independent watchdog keeps retrying.

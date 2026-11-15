@@ -100,8 +100,9 @@ enum DisplayHardware {
         (Int(CGDisplayRotation(id).rounded()) % 360 + 360) % 360
     }
 
-    /// The setter returns nothing, so success is confirmed by reading the rotation back.
-    static func setRotation(id: CGDirectDisplayID, degrees: Int) throws {
+    /// Asks for the rotation without waiting. The new value only shows up once the caller's run loop
+    /// processes the reconfiguration, so the app confirms it asynchronously instead of blocking.
+    static func requestRotation(id: CGDirectDisplayID, degrees: Int) throws {
         guard [0, 90, 180, 270].contains(degrees), canRotate(id), let display = panelDisplay(id) else {
             throw DisplayError.message("이 모니터 또는 macOS 버전에서는 화면 방향을 바꿀 수 없습니다.")
         }
@@ -109,10 +110,16 @@ enum DisplayHardware {
         let selector = NSSelectorFromString("setOrientation:")
         let set = unsafeBitCast(display.method(for: selector), to: OrientationSetter.self)
         set(display, selector, Int32(degrees))
-        for _ in 0..<50 {
+    }
+
+    /// Blocking variant for the watchdog process, which has no app run loop to keep responsive.
+    static func setRotation(id: CGDirectDisplayID, degrees: Int) throws {
+        try requestRotation(id: id, degrees: degrees)
+        let uuid = uuid(id)
+        for _ in 0..<80 {
             // The display ID can change while the framebuffer reconfigures, so re-resolve it.
-            if let uuid = uuid(id), let current = displayID(uuid: uuid), rotation(current) == degrees { return }
-            Thread.sleep(forTimeInterval: 0.1)
+            if let current = uuid.flatMap(displayID(uuid:)) ?? Optional(id), rotation(current) == degrees { return }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         throw DisplayError.message("화면 방향을 바꾸지 못했습니다.")
     }
