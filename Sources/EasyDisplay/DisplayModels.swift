@@ -89,9 +89,9 @@ enum DisplayRotation: Int, CaseIterable, Identifiable {
     var id: Int { rawValue }
     var label: String {
         switch self {
-        case .standard: "가로 (기본)"
+        case .standard: "가로"
         case .clockwise: "세로 (90°)"
-        case .upsideDown: "가로 뒤집기 (180°)"
+        case .upsideDown: "뒤집기 (180°)"
         case .counterClockwise: "세로 (270°)"
         }
     }

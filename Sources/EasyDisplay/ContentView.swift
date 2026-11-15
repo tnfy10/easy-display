@@ -40,7 +40,7 @@ struct ContentView: View {
                         ForEach(controller.displays) { display in
                             sidebarRow(icon: display.isBuiltin ? "laptopcomputer" : "display", title: display.name,
                                        detail: display.mirrorOf.flatMap { controller.display($0) }.map { "\($0.name) 미러링" }
-                                           ?? "\(display.active.sizeLabel) · \(display.active.isHiDPI ? "HiDPI" : "일반")\(display.isPortrait ? " · 세로" : "")\(display.hdrEnabled ? " · HDR" : "")",
+                                           ?? "\(display.active.sizeLabel) · \(display.active.isHiDPI ? "HiDPI" : "일반 배율")\(display.isPortrait ? " · 세로" : "")\(display.hdrEnabled ? " · HDR" : "")",
                                        selected: !controller.showingArrangement && controller.selectedID == display.id,
                                        isMain: display.isMain) { controller.open(display) }
                         }
@@ -48,7 +48,6 @@ struct ContentView: View {
                 }.listStyle(.sidebar)
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
-                        Label("\(controller.displays.count)개 연결됨", systemImage: "checkmark.circle.fill")
                         if !controller.stalledPorts.isEmpty {
                             Label("\(controller.stalledPorts.count)개 포트 연결 실패", systemImage: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
@@ -232,15 +231,12 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(display.active.isHiDPI ? "HiDPI 사용 중" : "일반 배율")
-                .font(.caption.weight(.semibold)).padding(.horizontal, 12).padding(.vertical, 7)
-                .background(display.active.isHiDPI ? Color.mint.opacity(0.15) : Color.secondary.opacity(0.12), in: Capsule())
         }
     }
 
     private func signalCard(_ display: ConnectedDisplay) -> some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack { Label("현재 화면", systemImage: "waveform.path.ecg").font(.headline); Spacer(); Text("실시간 확인").font(.caption).foregroundStyle(.secondary) }
+            Label("현재 화면", systemImage: "waveform.path.ecg").font(.headline)
             HStack(alignment: .top, spacing: 24) {
                 metric("화면에 보이는 크기", value: display.active.sizeLabel, detail: display.active.isHiDPI ? "HiDPI · 2배 렌더링" : "일반 배율 · 1배 렌더링")
                 Divider()
@@ -301,19 +297,33 @@ struct ContentView: View {
             }
             Divider()
             HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("적용 후 15초 안에 유지 여부를 선택하세요").font(.callout.weight(.medium))
-                    Text("확인하지 않으면 이전 설정으로 자동 복구됩니다.").font(.caption).foregroundStyle(.secondary)
-                }
+                applyStatus(display)
                 Spacer()
                 Button("설정 적용") { controller.preview() }
                     .buttonStyle(.borderedProminent).tint(.mint).controlSize(.large)
-                    .help(controller.selectedMode?.selectionKey == display.active.selectionKey
-                          ? "현재 설정과 같습니다. 화면 크기나 주사율을 바꾸면 적용할 수 있습니다."
-                          : "선택한 설정을 적용하고 유지 여부를 확인합니다.")
                     .disabled(controller.selectedMode == nil || controller.selectedMode?.selectionKey == display.active.selectionKey || controller.busy || display.isMirrored)
             }
         }.padding(20).background(cardBackground).disabled(controller.pending != nil || controller.layoutPending != nil)
+    }
+
+    /// Says what "설정 적용" will do, or why it is unavailable, right next to the button.
+    @ViewBuilder private func applyStatus(_ display: ConnectedDisplay) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if display.isMirrored {
+                Text("미러링 중이라 적용할 수 없어요").font(.callout.weight(.medium))
+                Text("확장으로 바꾸면 해상도를 설정할 수 있습니다.").font(.caption).foregroundStyle(.secondary)
+            } else if let target = controller.selectedMode, target.selectionKey != display.active.selectionKey {
+                Text("\(modeSummary(display.active)) → \(modeSummary(target))").font(.callout.weight(.medium)).monospacedDigit()
+                Text("적용 후 15초 안에 유지를 누르지 않으면 이전 설정으로 돌아갑니다.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("현재 설정과 같아요").font(.callout.weight(.medium))
+                Text("화면 크기나 주사율을 고르면 적용할 수 있습니다.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func modeSummary(_ mode: DisplayMode) -> String {
+        "\(mode.sizeLabel) \(mode.isHiDPI ? "HiDPI" : "일반 배율") · \(mode.frequencyLabel)"
     }
 
     private var allModeControls: some View {
@@ -323,7 +333,7 @@ struct ContentView: View {
                     Text("\(mode.sizeLabel)  ·  \(mode.isHiDPI ? "HiDPI" : "일반 배율")").tag(mode.resolutionKey)
                 }
             }
-            Toggle("일반 배율(LoDPI) 모드도 표시", isOn: $controller.showLoDPI).font(.callout)
+            Toggle("일반 배율 해상도도 표시", isOn: $controller.showLoDPI).font(.callout)
         }
     }
 
@@ -365,23 +375,14 @@ struct ContentView: View {
 
     private func rotationCard(_ display: ConnectedDisplay) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("화면 방향", systemImage: display.isPortrait ? "rectangle.portrait" : "rectangle").font(.headline)
-                Spacer()
-                Picker("화면 방향", selection: Binding(
-                    get: { DisplayRotation(rawValue: display.rotation) ?? .standard },
-                    set: { controller.setRotation(display, to: $0) }
-                )) {
-                    ForEach(DisplayRotation.allCases) { Text($0.label).tag($0) }
-                }.labelsHidden().fixedSize()
-            }
-            HStack(spacing: 8) {
-                Button { controller.setRotation(display, to: .standard) } label: { Label("가로", systemImage: "rectangle") }
-                    .disabled(display.rotation == 0)
-                Button { controller.setRotation(display, to: .clockwise) } label: { Label("세로", systemImage: "rectangle.portrait") }
-                    .disabled(display.isPortrait)
-            }
-            Text("모니터를 세로로 세워 쓸 때 화면을 회전합니다. 바꾼 뒤 15초 안에 유지를 누르지 않으면 이전 방향으로 돌아갑니다.")
+            Label("화면 방향", systemImage: display.isPortrait ? "rectangle.portrait" : "rectangle").font(.headline)
+            Picker("화면 방향", selection: Binding(
+                get: { DisplayRotation(rawValue: display.rotation) ?? .standard },
+                set: { controller.setRotation(display, to: $0) }
+            )) {
+                ForEach(DisplayRotation.allCases) { Text($0.label).tag($0) }
+            }.pickerStyle(.segmented).labelsHidden()
+            Text("모니터를 세로로 세워 쓸 때 화면을 회전합니다. 고르는 즉시 바뀌고, 15초 안에 유지를 누르지 않으면 이전 방향으로 돌아갑니다.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -397,7 +398,7 @@ struct ContentView: View {
                 Toggle("HDR", isOn: Binding(get: { display.hdrEnabled }, set: { controller.setHDR(display, enabled: $0) }))
                     .toggleStyle(.switch).labelsHidden()
             }
-            Text("HDR 영상·사진·게임을 더 넓은 밝기와 색 범위로 표시합니다. 켜면 일반 화면이 어둡거나 색이 다르게 보일 수 있어요. 바꾼 뒤 15초 안에 유지를 누르지 않으면 이전 설정으로 돌아갑니다.")
+            Text("HDR 영상·사진·게임을 더 넓은 밝기와 색 범위로 표시합니다. 켜면 일반 화면이 어둡거나 색이 다르게 보일 수 있어요. 누르는 즉시 바뀌고, 15초 안에 유지를 누르지 않으면 이전 설정으로 돌아갑니다.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -428,11 +429,10 @@ struct ContentView: View {
     }
 
     private var previewSheet: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "display").font(.system(size: 42)).foregroundStyle(.mint)
-            Text("이 화면 설정을 유지할까요?").font(.title2.bold())
+        confirmSheet(icon: "display", title: "이 화면 설정을 유지할까요?",
+                     summary: controller.selected.map { modeSummary($0.active) } ?? "",
+                     keep: controller.keep, revert: controller.rollback) {
             if let display = controller.selected {
-                Text("\(display.active.sizeLabel) · \(display.active.isHiDPI ? "HiDPI" : "일반 배율") · \(display.active.frequencyLabel)")
                 VStack(spacing: 6) {
                     Text("모니터 출력 신호: \(display.signal?.label ?? "확인 불가")").font(.callout.weight(.medium))
                     if let before = controller.pending?.initialSignal, let now = display.signal,
@@ -441,25 +441,34 @@ struct ContentView: View {
                     }
                 }.padding(12).frame(maxWidth: .infinity).background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
             }
-            Text("\(controller.remainingSeconds)초 후 이전 설정으로 자동 복구").monospacedDigit().foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                Button("이전 설정으로 복구", role: .cancel) { controller.rollback() }.keyboardShortcut(.cancelAction)
-                Button("이 설정 유지") { controller.keep() }.buttonStyle(.borderedProminent).tint(.mint)
-            }.controlSize(.large)
-        }.padding(32).frame(width: 480).interactiveDismissDisabled()
+        }
     }
 
     private var layoutSheet: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "rectangle.3.group").font(.system(size: 42)).foregroundStyle(.mint)
-            Text(controller.layoutPending?.title ?? "이 설정을 유지할까요?").font(.title2.bold())
-            Text(controller.layoutPending?.summary ?? "").multilineTextAlignment(.center)
-            Text("화면이 보이지 않거나 모니터 경고가 나타나면 기다리세요. 자동으로 복구됩니다.")
-                .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            Text("\(controller.remainingSeconds)초 후 이전 설정으로 자동 복구").monospacedDigit().foregroundStyle(.secondary)
+        confirmSheet(icon: "rectangle.3.group", title: controller.layoutPending?.title ?? "이 설정을 유지할까요?",
+                     summary: controller.layoutPending?.summary ?? "",
+                     keep: controller.keepLayout, revert: controller.revertLayout) { EmptyView() }
+    }
+
+    /// Every timed change confirms the same way: Return keeps it, Esc or the countdown reverts it.
+    private func confirmSheet<Extra: View>(icon: String, title: String, summary: String,
+                                           keep: @escaping () -> Void, revert: @escaping () -> Void,
+                                           @ViewBuilder extra: () -> Extra) -> some View {
+        VStack(spacing: 18) {
+            Image(systemName: icon).font(.system(size: 42)).foregroundStyle(.mint)
+            Text(title).font(.title2.bold())
+            Text(summary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            extra()
+            Text("화면이 보이지 않거나 모니터 경고가 나타나면 그대로 기다리세요. 자동으로 복구됩니다.")
+                .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 6) {
+                ProgressView(value: Double(controller.remainingSeconds), total: 15).tint(.mint)
+                    .animation(.linear(duration: 1), value: controller.remainingSeconds)
+                Text("\(controller.remainingSeconds)초 후 이전 설정으로 자동 복구").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+            }
             HStack(spacing: 12) {
-                Button("이전 설정으로 복구", role: .cancel) { controller.revertLayout() }.keyboardShortcut(.cancelAction)
-                Button("이 설정 유지") { controller.keepLayout() }.buttonStyle(.borderedProminent).tint(.mint)
+                Button("이전 설정으로 복구", role: .cancel, action: revert).keyboardShortcut(.cancelAction)
+                Button("이 설정 유지", action: keep).buttonStyle(.borderedProminent).tint(.mint).keyboardShortcut(.defaultAction)
             }.controlSize(.large)
         }.padding(32).frame(width: 480).interactiveDismissDisabled()
     }
