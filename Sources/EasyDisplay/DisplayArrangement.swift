@@ -43,6 +43,32 @@ enum DisplayArrangement {
         return nearest
     }
 
+    /// A line where a snapped display's edge or center lines up with another display's.
+    struct Guide: Equatable {
+        enum Axis: Equatable { case vertical, horizontal }
+        let axis: Axis
+        /// x for vertical guides, y for horizontal ones.
+        let position: CGFloat
+        /// Extent along the line, covering both displays.
+        let start: CGFloat
+        let end: CGFloat
+    }
+
+    /// Guides to draw for `rect` at its snapped place: shared edges plus aligned edges and centers.
+    static func guides(for rect: CGRect, others: [CGRect]) -> [Guide] {
+        var result: [Guide] = []
+        func add(_ guide: Guide) { if !result.contains(guide) { result.append(guide) } }
+        for other in others {
+            for x in [rect.minX, rect.midX, rect.maxX] where [other.minX, other.midX, other.maxX].contains(where: { abs($0 - x) < 0.5 }) {
+                add(Guide(axis: .vertical, position: x, start: min(rect.minY, other.minY), end: max(rect.maxY, other.maxY)))
+            }
+            for y in [rect.minY, rect.midY, rect.maxY] where [other.minY, other.midY, other.maxY].contains(where: { abs($0 - y) < 0.5 }) {
+                add(Guide(axis: .horizontal, position: y, start: min(rect.minX, other.minX), end: max(rect.maxX, other.maxX)))
+            }
+        }
+        return result
+    }
+
     static func overlaps(_ a: CGRect, _ b: CGRect) -> Bool {
         let i = a.intersection(b)
         return !i.isNull && i.width > 0.5 && i.height > 0.5

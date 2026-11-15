@@ -108,6 +108,15 @@ final class DisplayTests: XCTestCase {
         XCTAssertEqual(far?.y, 1080)
     }
 
+    func testGuidesMarkSharedEdgeAndAlignedTops() {
+        let main = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let right = CGRect(x: 1920, y: 0, width: 1280, height: 800)
+        let guides = DisplayArrangement.guides(for: right, others: [main])
+        XCTAssertTrue(guides.contains(.init(axis: .vertical, position: 1920, start: 0, end: 1080)))
+        XCTAssertTrue(guides.contains(.init(axis: .horizontal, position: 0, start: 0, end: 3200)))
+        XCTAssertFalse(guides.contains { $0.axis == .horizontal && $0.position == 800 })
+    }
+
     func testNormalizationPutsMainAtOrigin() {
         let result = DisplayArrangement.normalized(["a": CGPoint(x: 100, y: -50), "b": CGPoint(x: 2020, y: 0)], main: "a")
         XCTAssertEqual(result["a"], .zero)

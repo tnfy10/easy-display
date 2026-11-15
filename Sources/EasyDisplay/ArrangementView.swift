@@ -76,7 +76,7 @@ struct ArrangementCard: View {
             Text("모니터 위치 맞추기").font(.subheadline.weight(.semibold))
             ArrangementCanvas().frame(height: 260)
             HStack(spacing: 18) {
-                legend("hand.draw", "끌어서 실제 책상 위치에 맞춰요")
+                legend("hand.draw", "끌면 놓일 자리와 정렬선이 보여요")
                 legend("menubar.rectangle", "위쪽 막대 = 주 모니터")
             }
             mainPicker
@@ -196,14 +196,19 @@ struct ArrangementCanvas: View {
             let scale = union.isNull ? 1 : min(geometry.size.width / (union.width * 1.6), geometry.size.height / (union.height * 1.6))
             let offset = CGPoint(x: (geometry.size.width - union.width * scale) / 2 - union.minX * scale,
                                  y: (geometry.size.height - union.height * scale) / 2 - union.minY * scale)
+            let preview = dragPreview(items: items, scale: scale)
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.07))
+                if let preview {
+                    snapOverlay(preview, scale: scale, offset: offset)
+                }
                 ForEach(items) { display in
                     let frame = display.bounds
                     let moved = dragging == display.id ? translation : .zero
-                    tile(display)
+                    tile(display, blocked: dragging == display.id && preview?.target == nil)
                         .frame(width: max(frame.width * scale - 4, 10), height: max(frame.height * scale - 4, 10))
                         .position(x: offset.x + frame.midX * scale + moved.width, y: offset.y + frame.midY * scale + moved.height)
+                        .opacity(dragging == display.id ? 0.75 : 1)
                         .zIndex(dragging == display.id ? 1 : 0)
                         .onTapGesture { controller.select(display) }
                         .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .named("arrangement"))
@@ -222,13 +227,55 @@ struct ArrangementCanvas: View {
         }
     }
 
-    private func tile(_ display: ConnectedDisplay) -> some View {
+    /// Where the dragged display will land, using the same snapping as the drop itself.
+    private struct DragPreview {
+        let target: CGRect?
+        let guides: [DisplayArrangement.Guide]
+    }
+
+    private func dragPreview(items: [ConnectedDisplay], scale: CGFloat) -> DragPreview? {
+        guard let id = dragging, scale > 0, let display = items.first(where: { $0.id == id }) else { return nil }
+        let dropped = display.bounds.offsetBy(dx: translation.width / scale, dy: translation.height / scale)
+        let others = items.filter { $0.id != id }.map(\.bounds)
+        guard let origin = DisplayArrangement.snap(dropped, others: others) else { return DragPreview(target: nil, guides: []) }
+        let target = CGRect(origin: origin, size: display.bounds.size)
+        return DragPreview(target: target, guides: DisplayArrangement.guides(for: target, others: others))
+    }
+
+    @ViewBuilder private func snapOverlay(_ preview: DragPreview, scale: CGFloat, offset: CGPoint) -> some View {
+        let dash = StrokeStyle(lineWidth: 1, dash: [4, 3])
+        ForEach(Array(preview.guides.enumerated()), id: \.offset) { _, guide in
+            Path { path in
+                switch guide.axis {
+                case .vertical:
+                    let x = offset.x + guide.position * scale
+                    path.move(to: CGPoint(x: x, y: offset.y + guide.start * scale - 12))
+                    path.addLine(to: CGPoint(x: x, y: offset.y + guide.end * scale + 12))
+                case .horizontal:
+                    let y = offset.y + guide.position * scale
+                    path.move(to: CGPoint(x: offset.x + guide.start * scale - 12, y: y))
+                    path.addLine(to: CGPoint(x: offset.x + guide.end * scale + 12, y: y))
+                }
+            }.stroke(Color.mint, style: dash)
+        }
+        if let target = preview.target {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.mint.opacity(0.12))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.mint, style: StrokeStyle(lineWidth: 1.5, dash: [5, 3])))
+                .frame(width: max(target.width * scale - 4, 10), height: max(target.height * scale - 4, 10))
+                .position(x: offset.x + target.midX * scale, y: offset.y + target.midY * scale)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func tile(_ display: ConnectedDisplay, blocked: Bool = false) -> some View {
         let selected = controller.selectedID == display.id
         let mirrors = controller.mirrors(of: display)
         return ZStack(alignment: .top) {
             RoundedRectangle(cornerRadius: 6)
                 .fill(selected ? Color.mint.opacity(0.28) : Color(nsColor: .windowBackgroundColor))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.mint : Color.primary.opacity(0.25), lineWidth: selected ? 2 : 1))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(blocked ? Color.red : selected ? Color.mint : Color.primary.opacity(0.25),
+                                                                  lineWidth: blocked || selected ? 2 : 1))
             if display.isMain {
                 // Stands in for the menu bar, as in System Settings.
                 RoundedRectangle(cornerRadius: 2).fill(Color.primary.opacity(0.55)).frame(height: 5).padding(.horizontal, 6).padding(.top, 5)
