@@ -15,6 +15,11 @@ import SwiftUI
     @Published var showCustom = false
     @Published var showRestoreConfirmation = false
     @Published var customInput = "1920x1080, 2048x1152, 1680x945"
+    /// Ports where a cable is detected but no monitor link came up.
+    @Published private(set) var stalledPorts: [StalledPort] = []
+    /// Hidden until that port recovers or is unplugged.
+    @Published private var dismissedPorts: Set<String> = []
+    private var portTracker = PortLinkTracker()
     private var timer: Timer?
     private var refreshTimer: Timer?
 
@@ -77,6 +82,23 @@ import SwiftUI
         if let display = selected, !display.modes.contains(where: { $0.id == selectedModeID }) {
             selectedModeID = display.modes.first(where: { $0.selectionKey == display.active.selectionKey })?.id
         }
+        refreshPorts()
+    }
+
+    var visibleStalledPorts: [StalledPort] { stalledPorts.filter { !dismissedPorts.contains($0.id) } }
+
+    func dismissStalledPort(_ port: StalledPort) { dismissedPorts.insert(port.id) }
+
+    private func refreshPorts() {
+        // Links legitimately drop while displays sleep; don't count that as a failure.
+        if CGDisplayIsAsleep(CGMainDisplayID()) != 0 {
+            portTracker = PortLinkTracker()
+            stalledPorts = []
+            return
+        }
+        let ports = portTracker.update(PortLinkReader.samples())
+        dismissedPorts.formIntersection(ports.map(\.id))
+        if ports != stalledPorts { stalledPorts = ports }
     }
 
     func select(_ display: ConnectedDisplay) {
@@ -197,9 +219,12 @@ import SwiftUI
         arrangeable.filter { !mirrors(of: $0).isEmpty }.max { mirrors(of: $0).count < mirrors(of: $1).count }
     }
 
+    /// Any display can become the source, including one that currently mirrors another;
+    /// excluding mirrors here left only the current source to choose from.
     func setMirrorSource(_ source: ConnectedDisplay) {
         refresh()
-        guard source.mirrorOf == nil, mirrors(of: source).count != displays.count - 1 || mirrorSource?.id != source.id else { return }
+        guard let source = display(source.id),
+              mirrorSource?.id != source.id || mirrors(of: source).count != displays.count - 1 else { return }
         previewLayout(DisplayArrangement.mirrorAll(snapshot(), to: source.uuid),
                       summary: "모든 모니터에 \(source.name) 화면을 표시합니다.")
     }
@@ -346,6 +371,14 @@ import SwiftUI
     var diagnosticText: String {
         displays.map { display in
             "\(display.name)\nUUID: \(display.uuid)\nModel: \(display.identity.modelKey)\nUI: \(display.active.sizeLabel) \(display.active.isHiDPI ? "HiDPI" : "LoDPI")\nRender: \(display.active.pixelWidth) × \(display.active.pixelHeight)\nSignal: \(display.signal?.label ?? "확인 불가")\nMode rate: \(display.active.frequencyLabel)\nMain: \(display.isMain)\nBounds: \(Int(display.bounds.minX)), \(Int(display.bounds.minY)) \(Int(display.bounds.width)) × \(Int(display.bounds.height))\nMirrors: \(self.display(display.mirrorOf)?.name ?? "-")\nHDR: \(display.supportsHDR ? (display.hdrEnabled ? "on" : "off") : "unsupported")\nAvailable modes: \(display.modes.count)"
-        }.joined(separator: "\n\n")
+        }.joined(separator: "\n\n") + portDiagnostics
+    }
+
+    private var portDiagnostics: String {
+        let samples = PortLinkReader.samples()
+        guard !samples.isEmpty else { return "" }
+        return "\n\nPorts:\n" + samples.map { s in
+            "\(s.portLabel): cable \(s.hotPlug ? "detected" : "none"), monitors \(s.sinkCount)\(s.productName.map { " (\($0))" } ?? "")\(s.isStalled ? " — LINK FAILED" : "")"
+        }.joined(separator: "\n")
     }
 }

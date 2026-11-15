@@ -12,11 +12,9 @@ struct ArrangementCard: View {
                 Label("여러 모니터 사용 방식", systemImage: "rectangle.3.group").font(.headline)
                 Text("모니터 \(controller.displays.count)대가 연결되어 있어요. 어떻게 쓸지 고르세요.").font(.callout).foregroundStyle(.secondary)
             }
-            HStack(spacing: 12) {
-                modeOption(mirroring: false, title: "확장", icon: "rectangle.split.2x1",
-                           detail: "모니터마다 다른 화면을 띄워 작업 공간을 넓혀요. 창을 옆 모니터로 옮길 수 있어요.")
-                modeOption(mirroring: true, title: "미러링", icon: "rectangle.on.rectangle",
-                           detail: "모든 모니터에 같은 화면을 보여줘요. 발표하거나 TV에 연결할 때 좋아요.")
+            HStack(alignment: .top, spacing: 12) {
+                modeOption(mirroring: false, title: "확장", icon: "rectangle.split.2x1", detail: extendDetail)
+                modeOption(mirroring: true, title: "미러링", icon: "rectangle.on.rectangle", detail: mirrorDetail)
             }
             if controller.isMirroring { mirroringSection } else { extendSection }
             if controller.displays.count > 2 { advancedSection }
@@ -25,6 +23,27 @@ struct ArrangementCard: View {
         .background(RoundedRectangle(cornerRadius: 16).fill(Color(nsColor: .controlBackgroundColor))
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.primary.opacity(0.06), lineWidth: 1)))
         .disabled(!controller.isIdle)
+    }
+
+    /// The display mirroring copies: the current source, or the main display that `setMirroring(true)` will use.
+    private var mirrorSourceCandidate: ConnectedDisplay? {
+        controller.isMirroring ? controller.mirrorSource
+            : controller.arrangeable.first(where: \.isMain) ?? controller.arrangeable.first
+    }
+
+    private func names(_ displays: [ConnectedDisplay]) -> String {
+        displays.map { "‘\($0.name)’" }.joined(separator: ", ")
+    }
+
+    private var extendDetail: String {
+        "\(names(controller.displays))에 서로 다른 화면을 띄워 작업 공간을 넓혀요. 창을 옆 모니터로 옮길 수 있어요."
+    }
+
+    private var mirrorDetail: String {
+        guard let source = mirrorSourceCandidate else { return "모든 모니터에 같은 화면을 보여줘요." }
+        let copies = controller.displays.filter { $0.id != source.id }
+        return "‘\(source.name)’ 화면을 \(names(copies))에도 똑같이 보여줘요."
+            + (controller.isMirroring ? "" : " 원본 모니터는 바꾼 뒤 고를 수 있어요.")
     }
 
     private func modeOption(mirroring: Bool, title: String, icon: String, detail: String) -> some View {
@@ -38,6 +57,8 @@ struct ArrangementCard: View {
                         if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(.mint).accessibilityLabel("사용 중") }
                     }
                     Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    ModeDiagram(mirroring: mirroring, displays: controller.displays, source: mirrorSourceCandidate?.id)
+                        .padding(.top, 6)
                 }
                 Spacer(minLength: 0)
             }
@@ -65,13 +86,18 @@ struct ArrangementCard: View {
     private var mirroringSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             let sources = controller.arrangeable
-            Picker("복제할 원본 화면", selection: Binding(
+            Picker("원본 모니터 (이 화면이 복제돼요)", selection: Binding(
                 get: { controller.mirrorSource?.id },
                 set: { id in if let source = controller.display(id) { controller.setMirrorSource(source) } })) {
-                ForEach(sources) { Text($0.name).tag(Optional($0.id)) }
+                ForEach(controller.displays) { Text($0.name).tag(Optional($0.id)) }
             }
             if let source = controller.mirrorSource {
-                Text("\(controller.mirrors(of: source).map(\.name).joined(separator: ", "))에 \(source.name) 화면이 똑같이 표시돼요. 해상도는 원본 모니터 기준으로 맞춰집니다.")
+                HStack(spacing: 10) {
+                    roleTile(source, role: "원본")
+                    Image(systemName: "arrow.right").foregroundStyle(.secondary).accessibilityHidden(true)
+                    ForEach(controller.mirrors(of: source)) { roleTile($0, role: "복제") }
+                }
+                Text("‘\(source.name)’ 화면이 \(names(controller.mirrors(of: source)))에 똑같이 표시돼요. 해상도는 원본 모니터 기준으로 맞춰집니다.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             if sources.count > 1 {
@@ -113,6 +139,47 @@ struct ArrangementCard: View {
 
     private func legend(_ icon: String, _ text: String) -> some View {
         Label(text, systemImage: icon).font(.caption).foregroundStyle(.secondary)
+    }
+
+    private func roleTile(_ display: ConnectedDisplay, role: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(role).font(.caption2.weight(.semibold)).foregroundStyle(role == "원본" ? Color.mint : Color.secondary)
+            Label(display.name, systemImage: "display").font(.callout.weight(.medium)).lineLimit(1)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(role == "원본" ? Color.mint.opacity(0.12) : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Miniature of what each monitor will show: distinct content when extending,
+/// the source's content repeated when mirroring.
+private struct ModeDiagram: View {
+    let mirroring: Bool
+    let displays: [ConnectedDisplay]
+    let source: CGDirectDisplayID?
+
+    private static let contents = ["doc.text", "safari", "music.note", "photo"]
+
+    var body: some View {
+        let ordered = displays.sorted { ($0.id == source ? 0 : 1) < ($1.id == source ? 0 : 1) }
+        HStack(alignment: .top, spacing: 8) {
+            ForEach(Array(ordered.enumerated()), id: \.element.id) { index, display in
+                let isSource = display.id == source
+                VStack(spacing: 3) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color(nsColor: .windowBackgroundColor))
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(mirroring && isSource ? Color.mint : Color.primary.opacity(0.25),
+                                                                       lineWidth: mirroring && isSource ? 1.5 : 1))
+                        .overlay(Image(systemName: mirroring ? Self.contents[0] : Self.contents[index % Self.contents.count])
+                            .font(.caption).foregroundStyle(.secondary))
+                        .frame(width: 54, height: 32)
+                    Text(display.name).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: 70)
+                    if mirroring { Text(isSource ? "원본" : "복제").font(.system(size: 9, weight: .semibold)).foregroundStyle(isSource ? Color.mint : Color.secondary) }
+                }
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 

@@ -37,6 +37,10 @@ struct ContentView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
                         Label("\(controller.displays.count)개 연결됨", systemImage: "checkmark.circle.fill")
+                        if !controller.stalledPorts.isEmpty {
+                            Label("\(controller.stalledPorts.count)개 포트 연결 실패", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        }
                         Button("v\(updater.currentVersion) · 업데이트 확인") { Task { await updater.check(userInitiated: true) } }
                             .buttonStyle(.link).disabled(updater.phase != .idle)
                     }.font(.caption).foregroundStyle(.secondary)
@@ -50,6 +54,7 @@ struct ContentView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
                         UpdateBanner()
+                        ForEach(controller.visibleStalledPorts) { portWarning($0) }
                         header(display)
                         signalCard(display)
                         if let notice = controller.notice {
@@ -69,7 +74,10 @@ struct ContentView: View {
                     }.padding(30).frame(maxWidth: 900, alignment: .leading).frame(maxWidth: .infinity)
                 }.background(Color(nsColor: .windowBackgroundColor))
             } else {
-                ContentUnavailableView("연결된 모니터가 없습니다", systemImage: "display.trianglebadge.exclamationmark", description: Text("모니터를 연결한 뒤 새로고침해 주세요."))
+                VStack(spacing: 22) {
+                    ForEach(controller.visibleStalledPorts) { portWarning($0) }
+                    ContentUnavailableView("연결된 모니터가 없습니다", systemImage: "display.trianglebadge.exclamationmark", description: Text("모니터를 연결한 뒤 새로고침해 주세요."))
+                }.padding(30).frame(maxWidth: 900)
             }
         }
         .frame(minWidth: 880, minHeight: 700)
@@ -92,6 +100,28 @@ struct ContentView: View {
         .confirmationDialog("등록 전 HiDPI 설정으로 복원할까요?", isPresented: $controller.showRestoreConfirmation) {
             Button("등록 전 설정 복원", role: .destructive) { controller.restoreOverride() }
         } message: { Text("이 앱이 처음 등록하기 전 파일로 되돌립니다. 관리자 인증과 재시동이 필요합니다.") }
+    }
+
+    private func portWarning(_ port: StalledPort) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "cable.connector.slash").font(.title2).foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("\(port.label)에 케이블이 감지됐지만 모니터가 연결되지 않았습니다").font(.headline)
+                Text("Mac과 모니터가 화면 신호를 맞추지 못해 macOS가 모니터를 인식하지 못한 상태입니다. 모니터가 꺼져 있거나 다른 입력을 보고 있다면 정상일 수 있어요.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("1. 이 포트의 케이블을 뽑았다가 다시 꽂으세요.")
+                    Text("2. 그래도 안 되면 모니터 전원을 껐다 켜세요.")
+                    Text("3. 다른 모니터 케이블도 모두 뺀 뒤 한 대씩 다시 연결하세요.")
+                }.font(.callout)
+            }
+            Spacer(minLength: 0)
+            Button { controller.dismissStalledPort(port) } label: { Image(systemName: "xmark") }
+                .buttonStyle(.plain).help("이 포트가 다시 연결될 때까지 숨기기").accessibilityLabel("경고 닫기")
+        }
+        .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.orange.opacity(0.35), lineWidth: 1))
     }
 
     private func header(_ display: ConnectedDisplay) -> some View {

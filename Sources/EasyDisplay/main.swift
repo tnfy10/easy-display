@@ -39,6 +39,9 @@ struct EasyDisplayApp: App {
         MenuBarExtra("Easy Display", systemImage: "display.2") {
             Button("Easy Display 열기") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
             Divider()
+            ForEach(controller.stalledPorts) { port in
+                Button("⚠︎ \(port.label) 모니터 연결 실패") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
+            }
             ForEach(controller.displays) { display in
                 Button {
                     controller.select(display); openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true)
