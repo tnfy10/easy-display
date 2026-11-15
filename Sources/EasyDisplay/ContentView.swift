@@ -17,12 +17,12 @@ struct ContentView: View {
                         Text("내 화면에 맞게, 선명하게").font(.caption).foregroundStyle(.secondary)
                     }
                 }.padding(.horizontal, 16).padding(.top, 22)
-                List {
+                List(selection: Binding(get: { controller.page }, set: { controller.page = $0 })) {
                     if controller.displays.count > 1 {
                         Section {
                             sidebarRow(icon: "rectangle.3.group", title: "모니터 배치",
-                                       detail: controller.isMirroring ? "미러링 사용 중" : "확장 · \(controller.displays.count)대",
-                                       selected: controller.showingArrangement) { controller.openArrangement() }
+                                       detail: controller.isMirroring ? "미러링 사용 중" : "확장 · \(controller.displays.count)대")
+                                .tag(DisplayController.Page.arrangement)
                         }
                     }
                     Section {
@@ -34,18 +34,18 @@ struct ContentView: View {
                                 controller.refresh()
                                 controller.notice = "모니터 \(controller.displays.count)개를 다시 확인했습니다."
                             } label: { Image(systemName: "arrow.clockwise") }
-                                .buttonStyle(.borderless).help("모니터 목록 새로고침").accessibilityLabel("모니터 목록 새로고침")
+                                .buttonStyle(.borderless).help("모니터 목록 새로고침 (⌘R)").accessibilityLabel("모니터 목록 새로고침")
                                 .disabled(!controller.isIdle)
-                        }.padding(.horizontal, 10).listRowSeparator(.hidden)
+                        }.listRowSeparator(.hidden).selectionDisabled()
                         ForEach(controller.displays) { display in
                             sidebarRow(icon: display.isBuiltin ? "laptopcomputer" : "display", title: display.name,
-                                       detail: display.mirrorOf.flatMap { controller.display($0) }.map { "\($0.name) 미러링" }
-                                           ?? "\(display.active.sizeLabel) · \(display.active.isHiDPI ? "HiDPI" : "일반 배율")\(display.isPortrait ? " · 세로" : "")\(display.hdrEnabled ? " · HDR" : "")",
-                                       selected: !controller.showingArrangement && controller.selectedID == display.id,
-                                       isMain: display.isMain) { controller.open(display) }
+                                       detail: sidebarDetail(display), isMain: display.isMain)
+                                .tag(DisplayController.Page.display(display.id))
                         }
                     }
-                }.listStyle(.sidebar)
+                }
+                .listStyle(.sidebar)
+                .disabled(!controller.isIdle)
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
                         if !controller.stalledPorts.isEmpty {
@@ -90,18 +90,8 @@ struct ContentView: View {
             .overlay(alignment: .top) { toast }
             .animation(.snappy, value: controller.notice)
         }
-        .frame(minWidth: 880, minHeight: 700)
+        .frame(minWidth: 760, minHeight: 560)
         .onChange(of: controller.selectedID) { showAllModes = false }
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(controller.diagnosticText, forType: .string)
-                    controller.notice = "모니터 진단 정보를 복사했습니다."
-                } label: { Label("진단 정보 복사", systemImage: "doc.on.doc") }
-                .help("현재 모드와 실제 출력 정보를 복사")
-            }
-        }
         .sheet(isPresented: Binding(get: { controller.pending != nil }, set: { if !$0 { controller.rollback() } })) { previewSheet }
         .sheet(isPresented: $controller.showCustom) { customSheet }
         .sheet(isPresented: Binding(get: { controller.layoutPending != nil }, set: { if !$0 { controller.revertLayout() } })) { layoutSheet }
@@ -113,23 +103,27 @@ struct ContentView: View {
         } message: { Text("이 앱이 처음 등록하기 전 파일로 되돌립니다. 관리자 인증과 재시동이 필요합니다.") }
     }
 
-    private func sidebarRow(icon: String, title: String, detail: String, selected: Bool, isMain: Bool = false,
-                            action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: icon).font(.title2).foregroundStyle(selected ? Color.mint : Color.secondary).frame(width: 28)
-                VStack(alignment: .leading, spacing: 5) {
+    private func sidebarRow(icon: String, title: String, detail: String, isMain: Bool = false) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon).font(.title2).foregroundStyle(.secondary).frame(width: 28)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 4) {
                     Text(title).fontWeight(.medium).lineLimit(1)
-                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    if isMain {
+                        Image(systemName: "menubar.rectangle").font(.caption2).foregroundStyle(.secondary)
+                            .help("주 모니터 (메뉴 막대·Dock)").accessibilityLabel("주 모니터")
+                    }
                 }
-                Spacer(minLength: 0)
-                if isMain { Image(systemName: "star.fill").font(.caption2).foregroundStyle(.secondary).help("주 모니터").accessibilityLabel("주 모니터") }
-            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                .background(selected ? Color.mint.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
-                .contentShape(Rectangle())
-        }.buttonStyle(.plain).listRowSeparator(.hidden)
-            .disabled(!controller.isIdle)
-            .accessibilityAddTraits(selected ? .isSelected : [])
+                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }.padding(.vertical, 5)
+    }
+
+    private func sidebarDetail(_ display: ConnectedDisplay) -> String {
+        if let source = controller.display(display.mirrorOf) {
+            return "\(source.name) 미러링 · \(display.active.sizeLabel)"
+        }
+        return "\(display.active.sizeLabel) · \(display.active.isHiDPI ? "HiDPI" : "일반 배율")\(display.isPortrait ? " · 세로" : "")\(display.hdrEnabled ? " · HDR" : "")"
     }
 
     /// Short confirmations float over the page and fade out, so they are seen wherever it is scrolled.

@@ -74,7 +74,7 @@ struct ArrangementCard: View {
     private var extendSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("모니터 위치 맞추기").font(.subheadline.weight(.semibold))
-            ArrangementCanvas().frame(height: 230)
+            ArrangementCanvas().frame(height: 260)
             HStack(spacing: 18) {
                 legend("hand.draw", "끌어서 실제 책상 위치에 맞춰요")
                 legend("menubar.rectangle", "위쪽 막대 = 주 모니터")
@@ -234,8 +234,8 @@ struct ArrangementCanvas: View {
                 RoundedRectangle(cornerRadius: 2).fill(Color.primary.opacity(0.55)).frame(height: 5).padding(.horizontal, 6).padding(.top, 5)
             }
             VStack(spacing: 2) {
-                Text(display.name).font(.caption.weight(.semibold)).lineLimit(1)
-                Text(display.active.sizeLabel).font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                Text(display.name).font(.callout.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
+                Text(display.active.sizeLabel).font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 if !mirrors.isEmpty {
                     Label(mirrors.map(\.name).joined(separator: ", "), systemImage: "rectangle.on.rectangle")
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(1)

@@ -19,6 +19,12 @@ struct EasyDisplayApp: App {
     @StateObject private var updater = Updater()
     @Environment(\.openWindow) private var openWindow
 
+    /// Every timed change confirms in the main window, so it must be on screen first.
+    private func show() {
+        openWindow(id: "main")
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     var body: some Scene {
         Window("Easy Display", id: "main") {
             ContentView().environmentObject(controller).environmentObject(updater).tint(.mint)
@@ -33,7 +39,14 @@ struct EasyDisplayApp: App {
                     Button("Easy Display 열기") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }.keyboardShortcut("0", modifiers: .command)
                 }
                 CommandGroup(after: .toolbar) {
-                    Button("모니터 새로고침") { controller.refresh() }.keyboardShortcut("r", modifiers: .command)
+                    Button("모니터 새로고침") {
+                        controller.refresh()
+                        controller.notice = "모니터 \(controller.displays.count)개를 다시 확인했습니다."
+                    }.keyboardShortcut("r", modifiers: .command)
+                }
+                CommandGroup(replacing: .help) {
+                    Button("진단 정보 복사") { controller.copyDiagnostics() }
+                    Link("Easy Display 도움말", destination: URL(string: "https://github.com/tnfy10/easy-display#readme")!)
                 }
             }
         MenuBarExtra("Easy Display", systemImage: "display.2") {
@@ -43,16 +56,38 @@ struct EasyDisplayApp: App {
                 Button("⚠︎ \(port.label) 모니터 연결 실패") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
             }
             ForEach(controller.displays) { display in
-                Button {
-                    controller.open(display); openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true)
-                } label: {
-                    Text("\(display.name) · \(display.active.sizeLabel)\(display.active.isHiDPI ? " HiDPI" : "")")
-                }
+                Menu("\(display.name) · \(display.active.sizeLabel)\(display.active.isHiDPI ? " HiDPI" : "")") {
+                    Button("설정 열기…") { show(); controller.open(display) }
+                    if let source = controller.display(display.mirrorOf) {
+                        Text("\(source.name) 화면을 복제하는 중")
+                    } else {
+                        Divider()
+                        let sizes = controller.scaledResolutions(for: display)
+                        if !sizes.isEmpty && !display.isMirrored {
+                            Section("화면 크기 (텍스트 크게 → 공간 넓게)") {
+                                ForEach(sizes) { mode in
+                                    Toggle(mode.sizeLabel, isOn: Binding(
+                                        get: { mode.resolutionKey == display.active.resolutionKey },
+                                        set: { _ in show(); controller.quickApply(mode, on: display) }))
+                                }
+                            }
+                        }
+                        if display.canRotate {
+                            Button(display.isPortrait ? "가로로 전환" : "세로로 전환") {
+                                show(); controller.setRotation(display, to: display.isPortrait ? .standard : .clockwise)
+                            }
+                        }
+                        if display.supportsHDR {
+                            Toggle("HDR", isOn: Binding(get: { display.hdrEnabled },
+                                                        set: { show(); controller.setHDR(display, enabled: $0) }))
+                        }
+                    }
+                }.disabled(!controller.isIdle)
             }
             if controller.displays.count > 1 {
                 Divider()
                 Button(controller.isMirroring ? "모든 모니터 확장" : "모든 모니터 미러링") {
-                    openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true)
+                    show()
                     controller.setMirroring(!controller.isMirroring)
                 }.disabled(!controller.isIdle)
             }

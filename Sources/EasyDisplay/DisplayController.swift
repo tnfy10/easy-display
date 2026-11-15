@@ -62,8 +62,10 @@ import SwiftUI
         }
     }
     /// HiDPI sizes in the current aspect ratio, from largest text to most space, like System Settings.
-    var scaledResolutions: [DisplayMode] {
-        guard let display = selected, display.active.height > 0 else { return [] }
+    var scaledResolutions: [DisplayMode] { selected.map(scaledResolutions(for:)) ?? [] }
+
+    func scaledResolutions(for display: ConnectedDisplay) -> [DisplayMode] {
+        guard display.active.height > 0 else { return [] }
         let aspect = Double(display.active.width) / Double(display.active.height)
         let current = display.active.resolutionKey
         let all = display.matchingResolutions.filter { mode in
@@ -138,6 +140,34 @@ import SwiftUI
         guard isIdle else { return }
         select(display)
         showingArrangement = false
+    }
+
+    /// Sidebar selection: the arrangement page or one monitor.
+    enum Page: Hashable { case arrangement, display(CGDirectDisplayID) }
+
+    var page: Page? {
+        get { showingArrangement ? .arrangement : selectedID.map(Page.display) }
+        set {
+            switch newValue {
+            case .arrangement: openArrangement()
+            case .display(let id): if let display = display(id) { open(display) }
+            case nil: break
+            }
+        }
+    }
+
+    /// Applies a size from the menu bar through the usual 15-second preview.
+    func quickApply(_ mode: DisplayMode, on display: ConnectedDisplay) {
+        guard isIdle, display.mirrorOf == nil, !display.isMirrored else { return }
+        open(display)
+        selectedResolutionKey = mode.resolutionKey
+        preview()
+    }
+
+    func copyDiagnostics() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(diagnosticText, forType: .string)
+        notice = "모니터 진단 정보를 복사했습니다."
     }
 
     func openArrangement() {
