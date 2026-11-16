@@ -426,15 +426,13 @@ struct ContentView: View {
                     }.pickerStyle(.segmented).labelsHidden().fixedSize()
                 }
             }
-            HStack {
-                Text("세부 형식").font(.callout)
-                Spacer()
-                Picker("세부 형식", selection: Binding(
-                    get: { display.colorMode ?? modes[0] },
-                    set: { controller.setColorMode(display, to: $0) }
-                )) {
-                    ForEach(modes) { Text($0.label).tag($0) }
-                }.labelsHidden().fixedSize()
+            // A menu picker under fixedSize() measures before its items exist and only widens once opened,
+            // so it fills the row like the refresh rate picker instead.
+            Picker("세부 형식", selection: Binding(
+                get: { display.colorMode ?? modes[0] },
+                set: { controller.setColorMode(display, to: $0) }
+            )) {
+                ForEach(modes) { Text($0.label).tag($0) }
             }
             Text("PC 모니터는 보통 RGB Full, TV는 Limited가 표준입니다. 검은색이 회색처럼 뜨고 색이 바래 보이면 RGB Full을, 어두운 부분이 뭉개지면 Limited를 고르거나 모니터의 입력 범위 설정과 맞춰 보세요. 고르는 즉시 바뀌고, 15초 안에 유지를 누르지 않으면 이전 설정으로 돌아갑니다.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
