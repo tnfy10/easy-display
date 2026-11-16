@@ -100,6 +100,33 @@ enum RecoveryWatchdog {
         return 1
     }
 
+    /// `--color-watchdog <marker> <uuid> <depth,range,eotf,encoding>`: restores the previous color output.
+    static func runColorMode(arguments: [String]) -> Int32 {
+        guard arguments.count == 5, let original = ColorOutputMode(argument: arguments[4]) else { return 2 }
+        let marker = URL(fileURLWithPath: arguments[2])
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            if !FileManager.default.fileExists(atPath: marker.path) { return 0 }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        for _ in 0..<300 {
+            if !FileManager.default.fileExists(atPath: marker.path) { return 0 }
+            if let id = DisplayHardware.displayID(uuid: arguments[3]) {
+                do {
+                    try DisplayHardware.setColorMode(id: id, mode: original)
+                    try? FileManager.default.removeItem(at: marker)
+                    return 0
+                } catch { /* Retry while the display reconfigures. */ }
+            }
+            Thread.sleep(forTimeInterval: 1)
+        }
+        return 1
+    }
+
+    static func startColorMode(uuid: String, original: ColorOutputMode) throws -> URL {
+        try launch { ["--color-watchdog", $0.path, uuid, original.argument] }
+    }
+
     static func startRotation(uuid: String, originalDegrees: Int) throws -> URL {
         try launch { ["--rotation-watchdog", $0.path, uuid, String(originalDegrees)] }
     }

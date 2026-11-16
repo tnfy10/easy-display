@@ -77,6 +77,16 @@ struct EasyDisplayApp: App {
                                 show(); controller.setRotation(display, to: display.isPortrait ? .standard : .clockwise)
                             }
                         }
+                        let rgb = display.colorModes.filter { $0.isRGB && $0.isHDR == (display.colorMode?.isHDR ?? false) }
+                        if Set(rgb.map(\.isFullRange)).count == 2 {
+                            Section("RGB 범위") {
+                                ForEach([true, false], id: \.self) { full in
+                                    Toggle(full ? "Full (0–255)" : "Limited (16–235)", isOn: Binding(
+                                        get: { display.colorMode.map { $0.isRGB && $0.isFullRange == full } ?? false },
+                                        set: { _ in show(); controller.setRGBRange(display, fullRange: full) }))
+                                }
+                            }
+                        }
                         if display.supportsHDR {
                             Toggle("HDR", isOn: Binding(get: { display.hdrEnabled },
                                                         set: { show(); controller.setHDR(display, enabled: $0) }))
@@ -117,6 +127,8 @@ if CommandLine.arguments.dropFirst().first == "--watchdog" {
     exit(RecoveryWatchdog.runHDR(arguments: CommandLine.arguments))
 } else if CommandLine.arguments.dropFirst().first == "--rotation-watchdog" {
     exit(RecoveryWatchdog.runRotation(arguments: CommandLine.arguments))
+} else if CommandLine.arguments.dropFirst().first == "--color-watchdog" {
+    exit(RecoveryWatchdog.runColorMode(arguments: CommandLine.arguments))
 } else if CommandLine.arguments.dropFirst().first == "--diagnose" {
     MainActor.assumeIsolated {
         let controller = DisplayController()

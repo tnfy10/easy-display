@@ -13,6 +13,7 @@
 - 기존 설정 백업, 중복 없이 모드 추가, 등록 전 설정 복원
 - 여러 모니터 배치: 확장/미러링 전환, 미러링 원본 선택, 주 모니터 지정, 끌어서 위치 정렬
 - HDR 지원 모니터의 HDR 켜기/끄기
+- 색 출력 형식 선택: RGB Full / Limited 범위, YCbCr 4:4:4·4:2:2·4:2:0, 비트 심도
 - 모니터 화면 방향 전환: 가로 / 세로(90°·270°) / 180° 회전, 15초 미리보기 후 유지
 - GitHub 릴리스 기반 앱 내 자동 업데이트
 - 메뉴 막대에서 앱 열기, 모니터 선택, 미러링/확장 전환
@@ -65,6 +66,15 @@ open 'build/Easy Display.app'
 ## HDR
 
 HDR을 지원하는 모니터에는 **HDR** 스위치가 표시됩니다. macOS 시스템 설정과 같은 내부 기능(SkyLight 비공개 API)으로 전환하며, 이 기능이 없는 macOS 버전에서는 스위치가 숨겨집니다. 전환 후 15초 안에 유지를 누르지 않으면 별도 복구 프로세스가 이전 상태로 되돌립니다. 미러링된 모니터는 원본 모니터에서 설정하세요. 케이블, 도크, 모니터 입력 설정에 따라 HDR이 켜지지 않을 수 있습니다.
+
+## 색 출력 형식 (RGB Full / Limited)
+
+외장 모니터마다 **색 출력 형식** 카드가 표시됩니다. 카드 위쪽에 지금 케이블로 나가는 신호 형식(예: `YCbCr 4:4:4 · Limited · 8비트`)이 표시됩니다.
+
+- **RGB 범위**: `Full (0–255)`은 PC 모니터, `Limited (16–235)`는 TV·영상 장비의 표준입니다. macOS가 HDMI TV나 일부 모니터를 TV로 인식해 YCbCr/Limited로 출력하면 검은색이 회색처럼 뜨고 색이 바래 보이는데, 이때 **Full**을 고르면 됩니다. 반대로 어두운 부분이 뭉개지면 Limited를 고르거나 모니터의 입력 범위(블랙 레벨) 설정과 맞추세요. 현재 비트 심도를 유지할 수 있으면 유지합니다.
+- **세부 형식**: 모니터와 현재 해상도·주사율에서 macOS가 허용하는 형식(RGB / YCbCr 4:4:4·4:2:2·4:2:0, 8·10·12비트)만 표시됩니다. HDR이 켜져 있으면 HDR 형식만, 꺼져 있으면 SDR 형식만 보입니다.
+
+macOS 내부 기능(SkyLight 비공개 API)으로 바꾸며 관리자 권한이 필요하지 않습니다. 고르는 즉시 바뀌고, 15초 안에 유지를 누르지 않으면 별도 복구 프로세스가 이전 형식으로 되돌립니다. 유지한 설정은 macOS가 모니터별로 저장합니다. 해상도나 주사율을 바꾸면 macOS가 형식을 다시 고를 수 있으니 다시 확인하세요. 이 기능이 없는 macOS 버전이나 형식을 하나만 지원하는 모니터에서는 카드가 숨겨집니다.
 
 ## 업데이트
 
@@ -133,6 +143,7 @@ GitHub Actions는 `main` 푸시와 PR에서 테스트, 앱 빌드, 코드 서명
 - 일반 모드 변경: CoreGraphics 디스플레이 구성 API
 - HiDPI 모드 등록: 모델별 `scale-resolutions` override
 - 신호 확인: IOKit의 현재 물리 타이밍. 지원되지 않으면 비워 둠
+- 색 출력 형식: SkyLight의 디스플레이 출력 모드(link description) API
 - UI: SwiftUI + AppKit
 
 Apple 공식 API 문서: [CGCompleteDisplayConfiguration](https://developer.apple.com/documentation/coregraphics/cgcompletedisplayconfiguration(_:_:)). 모델별 override 형식 참고: [one-key-hidpi](https://github.com/xzhih/one-key-hidpi). 이 프로젝트는 별도로 작성한 구현이며 BetterDisplay 코드나 바이너리를 포함하지 않습니다.

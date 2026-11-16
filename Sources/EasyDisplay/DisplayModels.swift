@@ -77,6 +77,13 @@ struct ConnectedDisplay: Identifiable {
     /// Clockwise degrees: 0, 90, 180 or 270.
     let rotation: Int
     var isPortrait: Bool { rotation == 90 || rotation == 270 }
+    /// Signal color formats macOS offers for the current mode (pixel encoding, range, bit depth).
+    let colorModes: [ColorOutputMode]
+    let colorMode: ColorOutputMode?
+    /// Choices that match the current HDR state; switching HDR itself is the HDR card's job.
+    var selectableColorModes: [ColorOutputMode] {
+        colorModes.filter { $0.isHDR == (colorMode?.isHDR ?? false) }.sorted()
+    }
 
     var matchingResolutions: [DisplayMode] {
         var seen = Set<String>()
@@ -94,6 +101,64 @@ enum DisplayRotation: Int, CaseIterable, Identifiable {
         case .upsideDown: "뒤집기 (180°)"
         case .counterClockwise: "세로 (270°)"
         }
+    }
+}
+
+/// One WindowServer "output mode link description": how pixels travel over the cable.
+/// Field order matches SkyLight's 16-byte struct: bit depth, full range flag, EOTF, pixel encoding.
+struct ColorOutputMode: Hashable, Identifiable, Comparable {
+    enum Encoding: UInt32 {
+        case rgb = 0, ycbcr444 = 1, ycbcr422 = 2, ycbcr420 = 3
+        var label: String {
+            switch self {
+            case .rgb: "RGB"
+            case .ycbcr444: "YCbCr 4:4:4"
+            case .ycbcr422: "YCbCr 4:2:2"
+            case .ycbcr420: "YCbCr 4:2:0"
+            }
+        }
+    }
+
+    let depth: UInt32
+    /// 1 = full range (0–255). YCbCr is always sent as limited range.
+    let range: UInt32
+    /// 0 = SDR gamma, 2 = PQ (HDR).
+    let eotf: UInt32
+    let encoding: UInt32
+
+    var id: String { argument }
+    var isRGB: Bool { encoding == Encoding.rgb.rawValue }
+    var isFullRange: Bool { range == 1 }
+    var isHDR: Bool { eotf != 0 }
+    var encodingLabel: String { Encoding(rawValue: encoding)?.label ?? "형식 \(encoding)" }
+    var rangeLabel: String { isFullRange ? "Full" : "Limited" }
+    var label: String { "\(encodingLabel) · \(rangeLabel) · \(depth)비트\(isHDR ? " · HDR" : "")" }
+
+    /// Compact form used to hand the original mode to the recovery watchdog.
+    var argument: String { "\(depth),\(range),\(eotf),\(encoding)" }
+
+    init(depth: UInt32, range: UInt32, eotf: UInt32, encoding: UInt32) {
+        self.depth = depth; self.range = range; self.eotf = eotf; self.encoding = encoding
+    }
+
+    init?(argument: String) {
+        let parts = argument.split(separator: ",").compactMap { UInt32($0) }
+        guard parts.count == 4 else { return nil }
+        self.init(depth: parts[0], range: parts[1], eotf: parts[2], encoding: parts[3])
+    }
+
+    /// RGB first, then full before limited, then higher bit depth.
+    static func < (a: Self, b: Self) -> Bool {
+        if a.encoding != b.encoding { return a.encoding < b.encoding }
+        if a.range != b.range { return a.range > b.range }
+        if a.depth != b.depth { return a.depth > b.depth }
+        return a.eotf < b.eotf
+    }
+
+    /// The RGB mode for the requested range, keeping the current bit depth and HDR state when possible.
+    static func rgbTarget(fullRange: Bool, in modes: [Self], current: Self?) -> Self? {
+        let candidates = modes.filter { $0.isRGB && $0.isFullRange == fullRange && $0.isHDR == (current?.isHDR ?? false) }
+        return candidates.first { $0.depth == current?.depth } ?? candidates.max { $0.depth < $1.depth }
     }
 }
 

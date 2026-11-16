@@ -171,6 +171,7 @@ struct ContentView: View {
             modeCard(display)
             if display.canRotate { rotationCard(display) }
             if display.supportsHDR { hdrCard(display) }
+            if display.colorMode != nil && display.selectableColorModes.count > 1 { colorCard(display) }
             customCard(display)
             Text("HiDPI는 글자와 UI를 더 많은 픽셀로 그린 뒤 화면에 맞춥니다. 최종 선명도는 모니터의 실제 픽셀 밀도에 따라 달라집니다.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -181,7 +182,7 @@ struct ContentView: View {
     private func mirrorCard(_ display: ConnectedDisplay, source: ConnectedDisplay) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Label("‘\(source.name)’ 화면을 복제하는 중", systemImage: "rectangle.on.rectangle").font(.headline)
-            Text("이 모니터는 원본 모니터의 화면을 그대로 보여 주고 있어서 해상도, 화면 방향, HDR을 따로 바꿀 수 없어요. 원본 모니터에서 바꾸거나 이 모니터를 독립 화면으로 전환하세요.")
+            Text("이 모니터는 원본 모니터의 화면을 그대로 보여 주고 있어서 해상도, 화면 방향, HDR, 색 출력 형식을 따로 바꿀 수 없어요. 원본 모니터에서 바꾸거나 이 모니터를 독립 화면으로 전환하세요.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
                 Button("원본 모니터 설정 열기") { controller.open(source) }
@@ -393,6 +394,49 @@ struct ContentView: View {
                     .toggleStyle(.switch).labelsHidden()
             }
             Text("HDR 영상·사진·게임을 더 넓은 밝기와 색 범위로 표시합니다. 켜면 일반 화면이 어둡거나 색이 다르게 보일 수 있어요. 누르는 즉시 바뀌고, 15초 안에 유지를 누르지 않으면 이전 설정으로 돌아갑니다.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20).background(cardBackground)
+        .disabled(!controller.isIdle)
+    }
+
+    private func colorCard(_ display: ConnectedDisplay) -> some View {
+        let modes = display.selectableColorModes
+        let ranges = [true, false].filter { full in modes.contains { $0.isRGB && $0.isFullRange == full } }
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("색 출력 형식", systemImage: "paintpalette").font(.headline)
+                Spacer()
+                if let current = display.colorMode {
+                    Text("현재 \(current.label)").font(.callout).foregroundStyle(.secondary).monospacedDigit()
+                }
+            }
+            if !ranges.isEmpty {
+                HStack {
+                    Text("RGB 범위").font(.callout)
+                    Spacer()
+                    Picker("RGB 범위", selection: Binding<Bool?>(
+                        get: { display.colorMode.flatMap { $0.isRGB ? $0.isFullRange : nil } },
+                        set: { if let full = $0 { controller.setRGBRange(display, fullRange: full) } }
+                    )) {
+                        ForEach(ranges, id: \.self) { full in
+                            Text(full ? "Full (0–255)" : "Limited (16–235)").tag(Optional(full))
+                        }
+                    }.pickerStyle(.segmented).labelsHidden().fixedSize()
+                }
+            }
+            HStack {
+                Text("세부 형식").font(.callout)
+                Spacer()
+                Picker("세부 형식", selection: Binding(
+                    get: { display.colorMode ?? modes[0] },
+                    set: { controller.setColorMode(display, to: $0) }
+                )) {
+                    ForEach(modes) { Text($0.label).tag($0) }
+                }.labelsHidden().fixedSize()
+            }
+            Text("PC 모니터는 보통 RGB Full, TV는 Limited가 표준입니다. 검은색이 회색처럼 뜨고 색이 바래 보이면 RGB Full을, 어두운 부분이 뭉개지면 Limited를 고르거나 모니터의 입력 범위 설정과 맞춰 보세요. 고르는 즉시 바뀌고, 15초 안에 유지를 누르지 않으면 이전 설정으로 돌아갑니다.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

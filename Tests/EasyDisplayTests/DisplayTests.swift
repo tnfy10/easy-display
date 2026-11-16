@@ -190,3 +190,39 @@ final class DisplayTests: XCTestCase {
         do { try await body(); XCTFail("expected error", file: file, line: line) } catch {}
     }
 }
+
+final class ColorOutputModeTests: XCTestCase {
+    // As reported by SkyLight for a 4K TV on HDMI: 8-bit YCbCr 4:4:4 limited is active.
+    let modes: [ColorOutputMode] = [
+        .init(depth: 10, range: 0, eotf: 2, encoding: 3), .init(depth: 12, range: 0, eotf: 2, encoding: 2),
+        .init(depth: 8, range: 0, eotf: 0, encoding: 1), .init(depth: 10, range: 0, eotf: 0, encoding: 3),
+        .init(depth: 8, range: 1, eotf: 0, encoding: 0), .init(depth: 8, range: 0, eotf: 0, encoding: 0),
+        .init(depth: 10, range: 1, eotf: 0, encoding: 0),
+    ]
+
+    func testLabelsDescribeEncodingRangeDepthAndHDR() {
+        XCTAssertEqual(modes[4].label, "RGB · Full · 8비트")
+        XCTAssertEqual(modes[2].label, "YCbCr 4:4:4 · Limited · 8비트")
+        XCTAssertEqual(modes[0].label, "YCbCr 4:2:0 · Limited · 10비트 · HDR")
+    }
+
+    func testWatchdogArgumentRoundTrips() {
+        for mode in modes { XCTAssertEqual(ColorOutputMode(argument: mode.argument), mode) }
+        XCTAssertNil(ColorOutputMode(argument: "8,1,0"))
+        XCTAssertNil(ColorOutputMode(argument: "8,x,0,0"))
+    }
+
+    func testRGBTargetKeepsDepthAndHDRStateWhenPossible() {
+        let current = modes[2]
+        XCTAssertEqual(ColorOutputMode.rgbTarget(fullRange: true, in: modes, current: current), modes[4])
+        XCTAssertEqual(ColorOutputMode.rgbTarget(fullRange: false, in: modes, current: current), modes[5])
+        // No 10-bit limited RGB: fall back to the deepest limited RGB mode.
+        XCTAssertEqual(ColorOutputMode.rgbTarget(fullRange: false, in: modes, current: modes[6]), modes[5])
+        // HDR is active and no HDR RGB mode exists, so there is nothing to pick.
+        XCTAssertNil(ColorOutputMode.rgbTarget(fullRange: true, in: modes, current: modes[0]))
+    }
+
+    func testSortingPutsRGBFullFirst() {
+        XCTAssertEqual(modes.filter { !$0.isHDR }.sorted().first, modes[6])
+    }
+}

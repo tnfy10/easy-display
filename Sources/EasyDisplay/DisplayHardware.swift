@@ -75,6 +75,53 @@ enum DisplayHardware {
         throw DisplayError.message("HDR을 \(enabled ? "켜지" : "끄지") 못했습니다. 케이블이나 모니터 설정에서 HDR 입력을 지원하는지 확인해 주세요.")
     }
 
+    // MARK: Color output (private SkyLight API; WindowServer stores the choice in its display preferences)
+
+    private typealias CurrentModeQuery = @convention(c) (CGDirectDisplayID, UnsafeMutablePointer<Int32>) -> Int32
+    private typealias OutputModeCount = @convention(c) (CGDirectDisplayID, Int32, UnsafeMutablePointer<Int32>) -> Int32
+    private typealias OutputModeList = @convention(c) (CGDirectDisplayID, Int32, UnsafeMutableRawPointer,
+                                                        UnsafeMutablePointer<Int32>, UnsafeMutablePointer<Int32>?) -> Int32
+    /// The 16-byte link description is passed by value, which arm64 splits across two registers.
+    private typealias OutputModeSetter = @convention(c) (CGDirectDisplayID, UInt64, UInt64) -> Int32
+
+    /// Looked up at runtime so a future macOS without these symbols simply hides the color output card.
+    static func colorModes(_ id: CGDirectDisplayID) -> (modes: [ColorOutputMode], current: ColorOutputMode?) {
+        guard let currentMode = symbol("SLSGetCurrentDisplayMode", as: CurrentModeQuery.self),
+              let count = symbol("SLSGetDisplayOutputModeCount", as: OutputModeCount.self),
+              let list = symbol("SLSGetDisplayOutputModeLinkDescriptions", as: OutputModeList.self) else { return ([], nil) }
+        var mode: Int32 = 0, total: Int32 = 0
+        guard currentMode(id, &mode) == 0, count(id, mode, &total) == 0, (1...256).contains(total) else { return ([], nil) }
+        var raw = [UInt32](repeating: 0, count: Int(total) * 4)
+        var filled = total, currentIndex: Int32 = -1
+        let result = raw.withUnsafeMutableBytes { list(id, mode, $0.baseAddress!, &filled, &currentIndex) }
+        guard result == 0 else { return ([], nil) }
+        let modes = (0..<Int(min(filled, total))).map {
+            ColorOutputMode(depth: raw[$0 * 4], range: raw[$0 * 4 + 1], eotf: raw[$0 * 4 + 2], encoding: raw[$0 * 4 + 3])
+        }
+        let current = modes.indices.contains(Int(currentIndex)) ? modes[Int(currentIndex)] : nil
+        var seen = Set<ColorOutputMode>()
+        return (modes.filter { $0.depth > 0 && seen.insert($0).inserted }, current)
+    }
+
+    /// Success is confirmed by reading the active link description back.
+    static func setColorMode(id: CGDirectDisplayID, mode: ColorOutputMode) throws {
+        let available = colorModes(id)
+        guard available.modes.contains(mode), let set = symbol("SLSSetDisplayOutputMode", as: OutputModeSetter.self) else {
+            throw DisplayError.message("이 모니터 또는 현재 해상도에서는 \(mode.label) 출력을 사용할 수 없습니다.")
+        }
+        guard available.current != mode else { return }
+        let result = set(id, UInt64(mode.depth) | UInt64(mode.range) << 32, UInt64(mode.eotf) | UInt64(mode.encoding) << 32)
+        guard result == 0 else { throw DisplayError.message("색 출력 형식을 바꾸지 못했습니다. (오류 \(result))") }
+        let uuid = uuid(id)
+        for _ in 0..<40 {
+            // The display ID can change while the link retrains, so re-resolve it.
+            let current = uuid.flatMap(displayID(uuid:)) ?? id
+            if colorModes(current).current == mode { return }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        throw DisplayError.message("색 출력 형식을 바꾸지 못했습니다. 케이블이나 모니터가 \(mode.label) 신호를 지원하는지 확인해 주세요.")
+    }
+
     // MARK: Rotation (private MonitorPanel API, the same control System Settings uses)
 
     private nonisolated(unsafe) static let monitorPanel = dlopen("/System/Library/PrivateFrameworks/MonitorPanel.framework/MonitorPanel", RTLD_LAZY)
@@ -150,6 +197,7 @@ enum DisplayHardware {
             let isBuiltin = CGDisplayIsBuiltin(id) != 0
             let master = CGDisplayMirrorsDisplay(id)
             let name = names[uuid] ?? link?.name ?? (isBuiltin ? "내장 디스플레이" : "모니터 \(identity.modelKey)")
+            let color = colorModes(id)
             return ConnectedDisplay(
                 id: id, uuid: uuid, identity: identity, name: name,
                 isBuiltin: isBuiltin, isMain: CGDisplayIsMain(id) != 0,
@@ -158,7 +206,8 @@ enum DisplayHardware {
                 signal: link?.signal, nativeWidth: link?.nativeWidth ?? 0, nativeHeight: link?.nativeHeight ?? 0,
                 bounds: CGDisplayBounds(id), mirrorOf: master == kCGNullDirectDisplay ? nil : master,
                 supportsHDR: supportsHDR(id), hdrEnabled: isHDREnabled(id),
-                canRotate: canRotate(id), rotation: rotation(id)
+                canRotate: canRotate(id), rotation: rotation(id),
+                colorModes: color.modes, colorMode: color.current
             )
         }.sorted {
             if $0.isMain != $1.isMain { return $0.isMain }
