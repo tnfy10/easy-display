@@ -157,6 +157,24 @@ final class DisplayTests: XCTestCase {
         assertJoinedWithoutOverlap(middle)
     }
 
+    func testMirroringTheMiddleDisplayClosesTheGap() {
+        let entries = threeInRow.map { LayoutEntry(uuid: $0.key, origin: $0.value.origin) }
+        let sizes = threeInRow.mapValues(\.size)
+        // The built-in leaves the row to copy the 4K; the QHD must move over to keep touching the 4K.
+        let mirrored = DisplayArrangement.mirroring(entries, display: "builtin", of: "lg4k")
+        let result = DisplayArrangement.closingGaps(mirrored, sizes: sizes, anchor: "lg4k")
+        let origins = Dictionary(uniqueKeysWithValues: result.map { ($0.uuid, $0.origin) })
+        XCTAssertEqual(origins["lg4k"], threeInRow["lg4k"]!.origin)
+        XCTAssertEqual(origins["qhd"]??.x, 0)
+        XCTAssertEqual(origins["builtin"], .some(nil), "the mirror takes its source's place")
+        assertJoinedWithoutOverlap(["lg4k": CGRect(origin: origins["lg4k"]!!, size: sizes["lg4k"]!),
+                                    "qhd": CGRect(origin: origins["qhd"]!!, size: sizes["qhd"]!)])
+
+        // Mirroring an end display leaves nothing to close.
+        let end = DisplayArrangement.mirroring(entries, display: "qhd", of: "builtin")
+        XCTAssertEqual(DisplayArrangement.closingGaps(end, sizes: sizes, anchor: "builtin"), end)
+    }
+
     func testCompactionLeavesJoinedLayoutsAlone() {
         XCTAssertEqual(DisplayArrangement.compacted(threeInRow, anchor: "builtin"), threeInRow)
         XCTAssertFalse(DisplayArrangement.touches(CGRect(x: 0, y: 0, width: 10, height: 10), CGRect(x: 10, y: 10, width: 10, height: 10)),

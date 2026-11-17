@@ -177,6 +177,21 @@ enum DisplayArrangement {
         }
     }
 
+    /// Pulls independent displays back into contact after a display left the desktop to become a mirror,
+    /// e.g. the middle one of three. `anchor` stays put; entries without an origin or size are left to macOS.
+    static func closingGaps(_ entries: [LayoutEntry], sizes: [String: CGSize], anchor: String) -> [LayoutEntry] {
+        var frames: [String: CGRect] = [:]
+        for entry in entries where entry.mirrorOf == nil {
+            if let origin = entry.origin, let size = sizes[entry.uuid] { frames[entry.uuid] = CGRect(origin: origin, size: size) }
+        }
+        let compacted = compacted(frames, anchor: anchor)
+        return entries.map { entry in
+            var entry = entry
+            if let frame = compacted[entry.uuid] { entry.origin = frame.origin }
+            return entry
+        }
+    }
+
     static func mirrorAll(_ entries: [LayoutEntry], to master: String) -> [LayoutEntry] {
         entries.map { entry in
             var entry = entry

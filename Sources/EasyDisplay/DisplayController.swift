@@ -313,7 +313,14 @@ import SwiftUI
     func mirror(_ display: ConnectedDisplay, of source: ConnectedDisplay?) {
         refresh()
         guard display.mirrorOf != source?.id else { return }
-        previewLayout(DisplayArrangement.mirroring(snapshot(), display: display.uuid, of: source?.uuid),
+        var entries = DisplayArrangement.mirroring(snapshot(), display: display.uuid, of: source?.uuid)
+        // The main display keeps its place unless it is the one becoming a mirror; then its source does.
+        let independent = Set(entries.filter { $0.mirrorOf == nil }.map(\.uuid))
+        if let anchor = [arrangeable.first(where: \.isMain)?.uuid, source?.uuid].compactMap({ $0 }).first(where: independent.contains) {
+            entries = DisplayArrangement.closingGaps(entries, sizes: Dictionary(uniqueKeysWithValues: displays.map { ($0.uuid, $0.bounds.size) }),
+                                                     anchor: anchor)
+        }
+        previewLayout(entries,
                       summary: source.map { "\(display.name)이(가) \($0.name) 화면을 미러링합니다." } ?? "\(display.name)을(를) 확장 화면으로 사용합니다.")
     }
 
