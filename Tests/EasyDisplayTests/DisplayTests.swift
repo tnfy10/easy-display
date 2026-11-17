@@ -117,6 +117,52 @@ final class DisplayTests: XCTestCase {
         XCTAssertFalse(guides.contains { $0.axis == .horizontal && $0.position == 800 })
     }
 
+    /// The real three-monitor row: 4K on the left, built-in (main) in the middle, QHD on the right.
+    private var threeInRow: [String: CGRect] {
+        ["lg4k": CGRect(x: -1920, y: 180, width: 1920, height: 1080),
+         "builtin": CGRect(x: 0, y: 0, width: 1512, height: 982),
+         "qhd": CGRect(x: 1512, y: 0, width: 2560, height: 1440)]
+    }
+
+    private func assertJoinedWithoutOverlap(_ frames: [String: CGRect], file: StaticString = #filePath, line: UInt = #line) {
+        let keys = frames.keys.sorted()
+        XCTAssertEqual(DisplayArrangement.connected(frames, from: keys[0]).count, keys.count, "displays left detached", file: file, line: line)
+        for (i, a) in keys.enumerated() { for b in keys[(i + 1)...] {
+            XCTAssertFalse(DisplayArrangement.overlaps(frames[a]!, frames[b]!), "\(a) overlaps \(b)", file: file, line: line)
+        } }
+    }
+
+    func testMovingMiddleOfThreeBelowKeepsTheOthersJoined() throws {
+        // Dropping the built-in under the 4K pulls it out of the row and would leave a gap between 4K and QHD.
+        let dropped = CGRect(x: -1700, y: 1300, width: 1512, height: 982)
+        let result = try XCTUnwrap(DisplayArrangement.drop("builtin", at: dropped, frames: threeInRow))
+        XCTAssertEqual(result["builtin"]?.minY, 1260)
+        XCTAssertEqual(result["lg4k"], threeInRow["lg4k"], "the 4K the built-in was dropped on stays put")
+        XCTAssertEqual(result["qhd"]?.minX, 0, "the QHD slides left to touch the 4K")
+        assertJoinedWithoutOverlap(result)
+    }
+
+    func testReorderingThreeInARowClosesTheGap() throws {
+        // Moving the left 4K past the QHD on the right: the built-in and QHD close up behind it.
+        let dropped = CGRect(x: 4100, y: 0, width: 1920, height: 1080)
+        let result = try XCTUnwrap(DisplayArrangement.drop("lg4k", at: dropped, frames: threeInRow))
+        XCTAssertEqual(result["lg4k"]?.minX, 4072)
+        XCTAssertEqual(result["builtin"]?.minX, 0)
+        assertJoinedWithoutOverlap(result)
+
+        // Moving the middle display to the far right: the outer two must end up side by side.
+        let middle = try XCTUnwrap(DisplayArrangement.drop("builtin", at: CGRect(x: 4200, y: 0, width: 1512, height: 982), frames: threeInRow))
+        XCTAssertEqual(middle["qhd"]!.minX, middle["lg4k"]!.maxX)
+        XCTAssertEqual(middle["builtin"]!.minX, middle["qhd"]!.maxX)
+        assertJoinedWithoutOverlap(middle)
+    }
+
+    func testCompactionLeavesJoinedLayoutsAlone() {
+        XCTAssertEqual(DisplayArrangement.compacted(threeInRow, anchor: "builtin"), threeInRow)
+        XCTAssertFalse(DisplayArrangement.touches(CGRect(x: 0, y: 0, width: 10, height: 10), CGRect(x: 10, y: 10, width: 10, height: 10)),
+                       "corner contact does not join displays")
+    }
+
     func testNormalizationPutsMainAtOrigin() {
         let result = DisplayArrangement.normalized(["a": CGPoint(x: 100, y: -50), "b": CGPoint(x: 2020, y: 0)], main: "a")
         XCTAssertEqual(result["a"], .zero)

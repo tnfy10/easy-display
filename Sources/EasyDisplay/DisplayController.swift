@@ -272,15 +272,14 @@ import SwiftUI
         guard isIdle, let display = self.display(display.id), display.mirrorOf == nil,
               let main = arrangeable.first(where: \.isMain) ?? arrangeable.first else { return }
         let dropped = display.bounds.offsetBy(dx: delta.width, dy: delta.height)
-        let others = arrangeable.filter { $0.id != display.id }.map(\.bounds)
-        guard let origin = DisplayArrangement.snap(dropped, others: others) else {
+        let frames = Dictionary(uniqueKeysWithValues: arrangeable.map { ($0.uuid, $0.bounds) })
+        guard let result = DisplayArrangement.drop(display.uuid, at: dropped, frames: frames) else {
             errorMessage = "이 위치에는 모니터를 놓을 수 없습니다. 다른 모니터의 가장자리에 붙여 주세요."
             return
         }
-        guard origin != display.bounds.origin else { return }
-        var origins = Dictionary(uniqueKeysWithValues: arrangeable.map { ($0.uuid, $0.bounds.origin) })
-        origins[display.uuid] = origin
-        applyOrigins(DisplayArrangement.normalized(origins, main: main.uuid), notice: "모니터 배치를 저장했습니다.")
+        let origins = DisplayArrangement.normalized(result.mapValues(\.origin), main: main.uuid)
+        guard origins != DisplayArrangement.normalized(frames.mapValues(\.origin), main: main.uuid) else { return }
+        applyOrigins(origins, notice: "모니터 배치를 저장했습니다.")
     }
 
     /// The display others copy; when several sets exist, the one with the most mirrors.

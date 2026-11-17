@@ -234,15 +234,19 @@ struct ArrangementCanvas: View {
     private struct DragPreview {
         let target: CGRect?
         let guides: [DisplayArrangement.Guide]
+        /// Other displays pulled along to stay joined, at their new places.
+        var shifted: [CGRect] = []
     }
 
     private func dragPreview(items: [ConnectedDisplay], scale: CGFloat) -> DragPreview? {
         guard let id = dragging, scale > 0, let display = items.first(where: { $0.id == id }) else { return nil }
         let dropped = display.bounds.offsetBy(dx: translation.width / scale, dy: translation.height / scale)
-        let others = items.filter { $0.id != id }.map(\.bounds)
-        guard let origin = DisplayArrangement.snap(dropped, others: others) else { return DragPreview(target: nil, guides: []) }
-        let target = CGRect(origin: origin, size: display.bounds.size)
-        return DragPreview(target: target, guides: DisplayArrangement.guides(for: target, others: others))
+        let frames = Dictionary(uniqueKeysWithValues: items.map { ($0.uuid, $0.bounds) })
+        guard let result = DisplayArrangement.drop(display.uuid, at: dropped, frames: frames),
+              let target = result[display.uuid] else { return DragPreview(target: nil, guides: []) }
+        let others = result.filter { $0.key != display.uuid }
+        return DragPreview(target: target, guides: DisplayArrangement.guides(for: target, others: Array(others.values)),
+                           shifted: others.filter { frames[$0.key] != $0.value }.map(\.value))
     }
 
     @ViewBuilder private func snapOverlay(_ preview: DragPreview, scale: CGFloat, offset: CGPoint) -> some View {
@@ -260,6 +264,13 @@ struct ArrangementCanvas: View {
                     path.addLine(to: CGPoint(x: offset.x + guide.end * scale + 12, y: y))
                 }
             }.stroke(Color.mint, style: dash)
+        }
+        ForEach(Array(preview.shifted.enumerated()), id: \.offset) { _, frame in
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.mint.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                .frame(width: max(frame.width * scale - 4, 10), height: max(frame.height * scale - 4, 10))
+                .position(x: offset.x + frame.midX * scale, y: offset.y + frame.midY * scale)
+                .accessibilityHidden(true)
         }
         if let target = preview.target {
             RoundedRectangle(cornerRadius: 6)

@@ -69,6 +69,78 @@ enum DisplayArrangement {
         return result
     }
 
+    /// Drops display `id` near `dropped` and returns every display's resulting frame, or nil when it cannot be placed.
+    /// Besides snapping the dropped display, displays left detached (e.g. after pulling the middle one of three
+    /// out of a row) are pulled back into contact; otherwise macOS rearranges them on its own.
+    static func drop(_ id: String, at dropped: CGRect, frames: [String: CGRect]) -> [String: CGRect]? {
+        let others = frames.filter { $0.key != id }.sorted { $0.key < $1.key }.map(\.value)
+        guard let origin = snap(dropped, others: others) else { return nil }
+        var result = frames
+        result[id] = CGRect(origin: origin, size: dropped.size)
+        return compacted(result, anchor: id)
+    }
+
+    /// Two displays are joined when they share part of an edge; touching only at a corner does not count.
+    static func touches(_ a: CGRect, _ b: CGRect) -> Bool {
+        let side = (abs(a.maxX - b.minX) < 0.5 || abs(b.maxX - a.minX) < 0.5) && min(a.maxY, b.maxY) - max(a.minY, b.minY) > 0.5
+        let stacked = (abs(a.maxY - b.minY) < 0.5 || abs(b.maxY - a.minY) < 0.5) && min(a.maxX, b.maxX) - max(a.minX, b.minX) > 0.5
+        return side || stacked
+    }
+
+    /// Keys reachable from `start` through touching displays.
+    static func connected(_ frames: [String: CGRect], from start: String) -> Set<String> {
+        var seen: Set<String> = [start]
+        var queue = [start]
+        while let key = queue.popLast(), let rect = frames[key] {
+            for (other, frame) in frames where !seen.contains(other) && touches(rect, frame) {
+                seen.insert(other)
+                queue.append(other)
+            }
+        }
+        return seen
+    }
+
+    /// Moves detached groups of displays, each as a unit, the shortest distance that joins them to `anchor`'s group.
+    /// The anchor's group never moves. Groups that cannot be joined without overlapping stay where they are.
+    static func compacted(_ frames: [String: CGRect], anchor: String) -> [String: CGRect] {
+        guard frames[anchor] != nil else { return frames }
+        var frames = frames
+        while true {
+            let joined = connected(frames, from: anchor)
+            var detached = frames.keys.filter { !joined.contains($0) }.sorted()
+            guard !detached.isEmpty else { return frames }
+            var groups: [Set<String>] = []
+            while let key = detached.first {
+                let group = connected(frames.filter { !joined.contains($0.key) }, from: key)
+                groups.append(group)
+                detached.removeAll { group.contains($0) }
+            }
+            var best: (group: Set<String>, delta: CGVector, distance: CGFloat)?
+            for group in groups {
+                let fixed = frames.filter { !group.contains($0.key) }.map(\.value)
+                for key in group.sorted() {
+                    let r = frames[key]!
+                    for target in joined.sorted().compactMap({ frames[$0] }) {
+                        let y = slide(r.minY, length: r.height, along: target.minY, otherLength: target.height, threshold: 0)
+                        let x = slide(r.minX, length: r.width, along: target.minX, otherLength: target.width, threshold: 0)
+                        let candidates = [CGPoint(x: target.maxX, y: y), CGPoint(x: target.minX - r.width, y: y),
+                                          CGPoint(x: x, y: target.maxY), CGPoint(x: x, y: target.minY - r.height)]
+                        for candidate in candidates {
+                            let delta = CGVector(dx: (candidate.x - r.minX).rounded(), dy: (candidate.y - r.minY).rounded())
+                            let distance = hypot(delta.dx, delta.dy)
+                            if let best, distance >= best.distance { continue }
+                            let moved = group.compactMap { frames[$0]?.offsetBy(dx: delta.dx, dy: delta.dy) }
+                            if moved.contains(where: { m in fixed.contains { overlaps($0, m) } }) { continue }
+                            best = (group, delta, distance)
+                        }
+                    }
+                }
+            }
+            guard let best else { return frames }
+            for key in best.group { frames[key] = frames[key]!.offsetBy(dx: best.delta.dx, dy: best.delta.dy) }
+        }
+    }
+
     static func overlaps(_ a: CGRect, _ b: CGRect) -> Bool {
         let i = a.intersection(b)
         return !i.isNull && i.width > 0.5 && i.height > 0.5
