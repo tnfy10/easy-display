@@ -24,6 +24,12 @@ import SwiftUI
     private var portTracker = PortLinkTracker()
     private var timer: Timer?
     private var refreshTimer: Timer?
+    /// What the last refresh saw, so changes made elsewhere (System Settings) are picked up within a second.
+    private var lastSignature: [String] = []
+    private var lastActive: [String: String] = [:]
+    private var ticks = 0
+    private var refreshQueued = false
+    static let reconfigured = Notification.Name("EasyDisplayReconfigured")
 
     struct Preview {
         let uuid: String
@@ -93,8 +99,22 @@ import SwiftUI
 
     init() {
         refresh()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+        // HDR and color output switch without any notification, so a cheap state check runs every second;
+        // the full reload (IOKit links, ports) keeps its 4-second pace unless something changed.
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.ticks += 1
+                if self.ticks % 4 == 0 || DisplayHardware.stateSignature() != self.lastSignature { self.refresh() }
+            }
+        }
+        // Fires as soon as WindowServer finishes a change, before AppKit's screen notification.
+        CGDisplayRegisterReconfigurationCallback({ _, flags, _ in
+            guard !flags.contains(.beginConfigurationFlag) else { return }
+            DispatchQueue.main.async { NotificationCenter.default.post(name: DisplayController.reconfigured, object: nil) }
+        }, nil)
+        NotificationCenter.default.addObserver(forName: Self.reconfigured, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.scheduleRefresh() }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
@@ -104,13 +124,31 @@ import SwiftUI
         }
     }
 
+    /// One reconfiguration reports every display separately; reload once for the batch.
+    private func scheduleRefresh() {
+        guard !refreshQueued else { return }
+        refreshQueued = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            refreshQueued = false
+            refresh()
+        }
+    }
+
     func refresh() {
         displays = DisplayHardware.displays()
+        lastSignature = DisplayHardware.stateSignature()
         if !displays.contains(where: { $0.id == selectedID }) { selectedID = displays.first?.id }
         if displays.count < 2 { showingArrangement = false }
-        if let display = selected, !display.modes.contains(where: { $0.id == selectedModeID }) {
-            selectedModeID = display.modes.first(where: { $0.selectionKey == display.active.selectionKey })?.id
+        // The picker follows the active mode when it changes underneath us (System Settings, a shortcut),
+        // otherwise it would keep showing the old mode as if it were a pending choice.
+        if let display = selected {
+            let changed = lastActive[display.uuid].map { $0 != display.active.selectionKey } ?? false
+            if changed || !display.modes.contains(where: { $0.id == selectedModeID }) {
+                selectedModeID = display.modes.first(where: { $0.selectionKey == display.active.selectionKey })?.id
+            }
         }
+        lastActive = Dictionary(displays.map { ($0.uuid, $0.active.selectionKey) }, uniquingKeysWith: { a, _ in a })
         refreshPorts()
     }
 

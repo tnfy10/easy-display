@@ -179,6 +179,13 @@ enum DisplayHardware {
         return Array(ids.prefix(Int(count)))
     }
 
+    /// Everything another app can change, read without IOKit so it is cheap enough to poll every second.
+    static func stateSignature() -> [String] {
+        onlineIDs().map { id in
+            "\(id)|\(CGDisplayCopyDisplayMode(id)?.ioDisplayModeID ?? -1)|\(CGDisplayBounds(id))|\(CGDisplayMirrorsDisplay(id))|\(CGDisplayIsMain(id))|\(rotation(id))|\(isHDREnabled(id))|\(colorModes(id).current?.argument ?? "-")"
+        }
+    }
+
     /// Mirrored displays have no NSScreen, so names seen earlier are remembered by UUID.
     @MainActor private static var names: [String: String] = [:]
 
